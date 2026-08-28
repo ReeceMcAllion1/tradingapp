@@ -55,7 +55,8 @@ and `ema_cross` do. They will still lose money much of the time — in the demo 
 all three strategies lose. That is the honest result, not a bug.
 
 **5. Never run this with money you cannot afford to lose entirely.** Start with paper
-trading, and stay there for weeks.
+trading, and stay there for weeks. Then read `python3 -m tradebot trades` — every
+number in this file can be checked against the individual trades that produced it.
 
 This is not financial advice. In the UK, crypto trading is unregulated and not covered
 by the FSCS or the Financial Ombudsman; you have no protection if it goes wrong. If
@@ -75,20 +76,19 @@ split-adjusted prices, costs of 2bp commission + 1bp half-spread + 2bp slippage:
 | strategy | final | total | CAGR | max drawdown | trades | costs | vs buy-and-hold |
 |---|---|---|---|---|---|---|---|
 | **buy_and_hold** | **$44,717** | **+347%** | **13.70%** | 52.9% | 10 | $27 | — |
-| ema_cross | $23,389 | +134% | 6.85% | 44.8% | 369 | $592 | **−213pp** |
+| ema_cross | $20,838 | +108% | 5.84% | 45.4% | 912 | $1,445 | **−239pp** |
 | mean_reversion | $12,031 | +20% | 1.39% | 43.3% | 408 | $414 | **−327pp** |
 | micro_scalp | $1,041 | **−90%** | −25.24% | 89.8% | 11,075 | $4,389 | **−437pp** |
 
-**2 of 30 strategy runs beat buying and holding.** Both were single lucky pairings
-(ema_cross on GE, mean_reversion on BA); with 30 combinations tested, a couple of
-winners is what chance alone produces.
+**2 of 30 strategy runs beat buying and holding.** Both were single lucky pairings;
+with 30 combinations tested, a couple of winners is what chance alone produces.
 
 Three things worth taking from that table.
 
-**Trading lost to not trading, badly.** ema_cross more than doubled the money and
-still finished $21,000 behind doing nothing. It is not a bad strategy — it cut the
-worst drawdown from 53% to 45% — it just spent a decade paying costs and sitting in
-cash during rallies.
+**Trading lost to not trading, badly.** ema_cross doubled the money and still
+finished $24,000 behind doing nothing. It is not a bad strategy — it cut the worst
+drawdown from 53% to 45% — it just spent a decade paying costs and sitting in cash
+during rallies.
 
 **The few-pence strategy did not merely underperform, it destroyed the account.** It
 turned $10,000 into $1,041 while paying **$4,389 in costs** — 44% of the starting
@@ -130,7 +130,7 @@ It is much better than the tiny-profit-target version, and it is still not the a
 |---|---|---|---|
 | buy_and_hold | $44,717 | +347% | — |
 | **never_lose** | **$31,716** | **+217%** | **−130pp** |
-| ema_cross (has a stop loss) | $23,389 | +134% | −213pp |
+| ema_cross (has a stop loss) | $20,838 | +108% | −239pp |
 
 So it beats the stop-loss strategy — in a rising market, refusing to cut is the right
 call — and it still finishes $13,000 behind doing nothing.
@@ -141,7 +141,7 @@ Intel:
 
 | strategy | final | total | vs buy-and-hold |
 |---|---|---|---|
-| ema_cross (has a stop loss) | $14,023 | +40% | **+30pp** |
+| ema_cross (has a stop loss) | $12,624 | +26% | **+16pp** |
 | buy_and_hold | $10,994 | +10% | — |
 | **never_lose** | **$7,860** | **−21%** | **−31pp** |
 
@@ -151,7 +151,7 @@ this is the situation stop losses exist for.
 **On First Republic specifically**, the rule booked **148 consecutive winning trades**
 — a flawless record — and then bought at $209.93 on 10 Dec 2021 and held it for 510
 days to $0.35. A $10,000 account ended at **$34**. The same stock, traded by
-`ema_cross` with a stop loss, ended at **$17,914**.
+`ema_cross` with a stop loss, ended at **$18,199**.
 
 That trade never closed voluntarily. It couldn't: the rule only sells at a profit, and
 there was never going to be one. It was force-closed by the drawdown kill switch. Left
@@ -192,11 +192,52 @@ python3 -m tradebot study --years 10 --strategies never_lose
 python3 -m tradebot study --years 10 --symbols FRCB,PTON,LUMN,BA,INTC --strategies never_lose,ema_cross
 ```
 
+## Seeing the trades
+
+Every number above can be checked, trade by trade:
+
+```bash
+python3 -m tradebot trades --symbol BA --strategy never_lose
+python3 -m tradebot trades --symbol SPY --strategy ema_cross --limit 0     # all of them
+python3 -m tradebot trades --symbol SPY --strategy ema_cross --csv-out my_trades.csv
+```
+
+```
+     #  opened     closed       days          qty      entry       exit      gross    costs        net     balance  reason
+  ------------------------------------------------------------------------------------------------------------------------
+     1  2016-08-30 2016-10-05     36      81.6026     122.58     122.63     +10.01    10.01      0.00 $ 10,000.00  take profit
+     2  2016-10-06 2016-10-10      4      80.6100     124.09     124.14     +10.01    10.01     -0.00 $ 10,000.00  take profit
+     3  2016-10-11 2016-10-14      3      80.5443     124.19     124.24     +10.01    10.01      0.00 $ 10,000.00  take profit
+     4  2016-10-17 2016-10-18      1      81.4131     122.87     124.20    +114.61    10.06 +   104.55 $ 10,104.55  take profit
+
+  128 trades: 97 winners, 31 losers (75.8% win rate)
+  Gross $1,460.22  -  costs $1,766.89  =  net $-306.67
+  Longest hold: 2,736 days (2019-03-01 to 2026-08-27), net $-10,453.25
+```
+
+That is `never_lose` on Boeing, and it shows in four rows what a summary table cannot:
+the first three "winners" netted **exactly £0.00** — a $10.01 gain against $10.01 of
+costs — and the last line is a single position held **seven and a half years** that
+lost more than the entire starting account. Winners are green, losers red, and
+`--csv-out` writes the lot for a spreadsheet.
+
+Wins and losses are separated into gross, costs and net on every row, so a trade that
+looks profitable but isn't cannot hide.
+
+**Live and paper runs** append each closed trade to `state/trades.csv` the moment it
+closes, so the history survives a restart and can be watched while the bot runs:
+
+```bash
+python3 -m tradebot paper &
+tail -f state/trades.csv
+```
+
 ## What you get
 
 ```
 python3 -m tradebot demo           the cost arithmetic, run on real data
 python3 -m tradebot study          10 years of stocks, every strategy vs buy-and-hold
+python3 -m tradebot trades         every trade a strategy made, with a CSV export
 python3 -m tradebot strategies     list available strategies
 python3 -m tradebot fetch          download history to CSV
 python3 -m tradebot backtest       replay a strategy over history
@@ -214,12 +255,13 @@ python3 -m tradebot init-config    write a starter config.toml
 | `portfolio.py` | Cash, positions and P&L, split into gross / slippage / commission |
 | `backtest.py` | Historical replay with no look-ahead |
 | `study.py` | Multi-symbol, multi-year comparison against buy-and-hold |
+| `tradelog.py` | The trade log: terminal table, CSV export, live append |
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Five strategies, including buy-and-hold and two that fail instructively |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 137, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 148, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---

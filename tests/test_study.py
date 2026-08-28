@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from tradebot import study as study_mod
 from tradebot.backtest import run as run_backtest
@@ -212,3 +214,80 @@ class TestStudyReporting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTradeLog(unittest.TestCase):
+    """The trade log is how results get checked, so its arithmetic must tie out."""
+
+    def _trades(self):
+        from tradebot.types import Side, Trade
+        return [
+            Trade(entry_ts=0, exit_ts=DAY_MS * 5, side=Side.BUY, qty=10.0,
+                  entry_price=100.0, exit_price=110.0, fees=2.0,
+                  entry_reference=100.0, exit_reference=110.0, reason="take profit"),
+            Trade(entry_ts=DAY_MS * 6, exit_ts=DAY_MS * 8, side=Side.BUY, qty=5.0,
+                  entry_price=110.0, exit_price=105.0, fees=1.0,
+                  entry_reference=110.0, exit_reference=105.0, reason="stop loss"),
+        ]
+
+    def test_the_running_balance_accumulates_net_pnl(self):
+        from tradebot import tradelog
+        rows = tradelog.rows(self._trades(), starting_cash=1000.0)
+        self.assertAlmostEqual(rows[0]["balance"], 1000.0 + 98.0)
+        self.assertAlmostEqual(rows[1]["balance"], 1000.0 + 98.0 - 26.0)
+
+    def test_days_held_is_reported(self):
+        from tradebot import tradelog
+        rows = tradelog.rows(self._trades())
+        self.assertAlmostEqual(rows[0]["days"], 5.0)
+        self.assertAlmostEqual(rows[1]["days"], 2.0)
+
+    def test_the_table_renders_without_colour_codes_when_asked(self):
+        from tradebot import tradelog
+        text = tradelog.render(self._trades(), starting_cash=1000.0, colour=False)
+        self.assertNotIn("\033", text)
+        self.assertIn("take profit", text)
+        self.assertIn("2 trades: 1 winners, 1 losers", text)
+
+    def test_an_empty_log_says_so_rather_than_crashing(self):
+        from tradebot import tradelog
+        self.assertIn("No trades", tradelog.render([], starting_cash=1000.0))
+
+    def test_csv_export_round_trips(self):
+        import csv as csvmod
+        from tradebot import tradelog
+        path = Path(tempfile.mkdtemp()) / "trades.csv"
+        tradelog.write_csv(path, self._trades(), starting_cash=1000.0)
+        with path.open(encoding="utf-8") as handle:
+            rows = list(csvmod.DictReader(handle))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["reason"], "take profit")
+        self.assertAlmostEqual(float(rows[1]["balance"]), 1072.0)
+
+    def test_append_writes_one_header_and_grows(self):
+        import csv as csvmod
+        from tradebot import tradelog
+        path = Path(tempfile.mkdtemp()) / "live.csv"
+        for i, trade in enumerate(self._trades()):
+            tradelog.append(path, trade, balance=1000.0 + i)
+        with path.open(encoding="utf-8") as handle:
+            rows = list(csvmod.DictReader(handle))
+        self.assertEqual(len(rows), 2, "appending must not rewrite or duplicate the header")
+
+    def test_appended_trades_keep_counting_up(self):
+        """A resumed run must not restart numbering at 1 on every append."""
+        import csv as csvmod
+        from tradebot import tradelog
+        path = Path(tempfile.mkdtemp()) / "live.csv"
+        for trade in self._trades():
+            tradelog.append(path, trade, balance=1000.0)
+        for trade in self._trades():
+            tradelog.append(path, trade, balance=1000.0)
+        with path.open(encoding="utf-8") as handle:
+            rows = list(csvmod.DictReader(handle))
+        self.assertEqual([r["n"] for r in rows], ["1", "2", "3", "4"])
+
+    def test_the_limit_note_reports_how_many_were_hidden(self):
+        from tradebot import tradelog
+        text = tradelog.render(self._trades(), limit=1, colour=False)
+        self.assertIn("and 1 more", text)

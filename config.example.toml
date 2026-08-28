@@ -91,4 +91,5 @@ qty_decimals = 6
 poll_seconds = 15.0
 state_file = "state/live_state.json"
 log_file = "state/tradebot.log"
+trades_file = "state/trades.csv"   # every closed trade, appended as it happens
 reconcile_every_bars = 20   # re-check the real position at the exchange this often

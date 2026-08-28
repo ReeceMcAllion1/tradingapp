@@ -40,6 +40,7 @@ class EmaCross(Strategy):
         self.size = size
         self.min_separation_pct = min_separation_pct
         self._slow_period = slow
+        self._trail: float | None = None
 
     @property
     def warmup(self) -> int:
@@ -54,9 +55,17 @@ class EmaCross(Strategy):
             return Decision(0.0, reason="warming up")
 
         separation = (fast - slow) / slow
-        stop = None
+
+        # The stop ratchets: it follows price up and never moves back down. Recomputing
+        # it from the latest close each bar - the obvious implementation - lets the stop
+        # fall with the price, so it retreats exactly when it is supposed to be catching
+        # you, and a position can bleed indefinitely without ever triggering it.
+        if ctx.is_flat:
+            self._trail = None
         if atr is not None:
-            stop = candle.close - self.stop_atr_multiple * atr
+            candidate = candle.close - self.stop_atr_multiple * atr
+            self._trail = candidate if self._trail is None else max(self._trail, candidate)
+        stop = self._trail
 
         # A band around the crossover stops the strategy flip-flopping every bar when
         # the two averages sit on top of each other - each of those flips would cost a

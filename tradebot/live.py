@@ -28,6 +28,7 @@ from .metrics import summarise
 from .portfolio import Portfolio
 from .risk import RiskManager
 from .strategies.base import Context, Strategy
+from . import tradelog
 from .types import Candle
 
 log = logging.getLogger("tradebot.live")
@@ -67,6 +68,7 @@ class LiveRunner:
         )
         self._stop = False
         self._bars = 0
+        self._logged_trades = 0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -136,6 +138,8 @@ class LiveRunner:
             candle.ts, candle.close, self.portfolio.qty, equity, self.config.account.currency,
         )
 
+        self._record_closed_trades(candle.close)
+
         for event in self.risk.events[-3:]:
             log.warning("risk: %s", event)
 
@@ -144,6 +148,34 @@ class LiveRunner:
 
         self._maybe_reconcile()
         self.save_state()
+
+    def _record_closed_trades(self, price: float) -> None:
+        """Append any newly closed round trips to the trade log.
+
+        Written as they happen rather than at shutdown, so an unattended run leaves a
+        readable history even if it is killed, and so the file can be tailed while the
+        bot is still going.
+        """
+        path = self.config.live.trades_file
+        if not path:
+            return
+        new = self.portfolio.trades[self._logged_trades:]
+        for offset, trade in enumerate(new):
+            try:
+                tradelog.append(
+                    path, trade,
+                    balance=self.portfolio.equity(price),
+                    number=self._logged_trades + offset + 1,
+                )
+            except OSError as exc:
+                log.warning("could not write the trade log: %s", exc)
+                return
+            log.info(
+                "TRADE CLOSED %s %.8f  %.2f -> %.2f  net %+.2f %s  (%s)",
+                trade.side.value, trade.qty, trade.entry_price, trade.exit_price,
+                trade.net_pnl, self.config.account.currency, trade.reason,
+            )
+        self._logged_trades = len(self.portfolio.trades)
 
     def _maybe_reconcile(self) -> None:
         """Periodically trust the exchange's position over our own bookkeeping."""
@@ -175,6 +207,15 @@ class LiveRunner:
             halted_reason=self.risk.halted_reason,
         )
         print(metrics.render(f"Session summary ({self.config.market.symbol})"))
+        if self.portfolio.trades:
+            print(tradelog.render(
+                self.portfolio.trades,
+                starting_cash=self.config.account.starting_cash,
+                currency=self.config.account.symbol,
+                limit=20,
+            ))
+            if self.config.live.trades_file:
+                print(f"  Full trade log: {self.config.live.trades_file}\n")
         if not self.portfolio.is_flat:
             log.warning(
                 "stopped while still holding %.8f - the position stays open at the venue",

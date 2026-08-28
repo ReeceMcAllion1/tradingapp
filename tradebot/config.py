@@ -60,6 +60,7 @@ class LiveConfig:
     poll_seconds: float = 15.0
     state_file: str = "state/live_state.json"
     log_file: str = "state/tradebot.log"
+    trades_file: str = "state/trades.csv"
     reconcile_every_bars: int = 20
 
 

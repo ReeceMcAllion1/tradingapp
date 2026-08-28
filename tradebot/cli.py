@@ -5,6 +5,7 @@
     python -m tradebot fetch            download history to CSV
     python -m tradebot backtest         test a strategy on history
     python -m tradebot study            10 years of stocks vs buy-and-hold
+    python -m tradebot trades           show every trade a strategy made
     python -m tradebot paper            run automated, live data, simulated money
     python -m tradebot verify-keys      read-only check that API keys work
     python -m tradebot live             run automated with real money (heavily gated)
@@ -20,10 +21,11 @@ from pathlib import Path
 from . import backtest as backtest_mod
 from . import config as config_mod
 from . import study as study_mod
+from . import tradelog
 from .brokers import CryptoComBroker, PaperBroker
 from .costs import CostModel
 from .engine import ExecutionSettings
-from .feeds import CryptoComFeed, CsvFeed, FeedError, SyntheticFeed, write_csv
+from .feeds import CryptoComFeed, CsvFeed, FeedError, SyntheticFeed, describe_span, write_csv
 from .live import LiveRunner, configure_logging
 from .risk import RiskLimits
 from .strategies import available, build
@@ -254,6 +256,50 @@ def cmd_study(args) -> int:
     return 0
 
 
+def cmd_trades(args) -> int:
+    """Show every trade a strategy made, so the results can be checked."""
+    config = config_mod.load(args.config)
+    strategy = _build_strategy(args, config)
+    money = config.account.symbol if args.csv or args.synthetic else "$"
+
+    if args.symbol:
+        try:
+            candles = study_mod.load_symbol(args.symbol.upper(), years=args.years, refresh=args.refresh)
+        except Exception as exc:  # noqa: BLE001 - the message matters more than the type
+            raise SystemExit(f"could not load {args.symbol}: {exc}") from exc
+        source = args.symbol.upper()
+    else:
+        candles = _load_candles(args, config)
+        source = args.csv or (config.market.symbol if not args.synthetic else "synthetic data")
+
+    costs = CostModel(
+        taker_fee_bps=args.fee_bps, maker_fee_bps=args.fee_bps,
+        half_spread_bps=args.spread_bps, slippage_bps=args.slippage_bps,
+        flat_fee=args.flat_fee,
+    )
+    limits = RiskLimits(
+        max_position_pct=args.max_position, max_daily_loss_pct=0.99,
+        max_drawdown_pct=args.kill_switch, max_trades_per_day=1000,
+        min_trade_notional=1.0, cooldown_bars_after_loss=0,
+    )
+    result = backtest_mod.run(
+        candles=candles, strategy=strategy, starting_cash=args.cash,
+        costs=costs, limits=limits, execution=ExecutionSettings(min_notional=1.0),
+    )
+
+    print(f"\n  {strategy.name} on {source} - {describe_span(candles)}")
+    for warning in strategy.cost_warnings(costs):
+        print(f"  ! {warning}", file=sys.stderr)
+
+    limit = None if args.limit == 0 else args.limit
+    print(tradelog.render(result.trades, starting_cash=args.cash, currency=money, limit=limit))
+
+    if args.csv_out:
+        path = tradelog.write_csv(args.csv_out, result.trades, starting_cash=args.cash)
+        print(f"  wrote {len(result.trades):,} trades to {path}\n")
+    return 0
+
+
 def cmd_fetch(args) -> int:
     config = config_mod.load(args.config)
     feed = CryptoComFeed(symbol=config.market.symbol, interval=config.market.interval)
@@ -290,15 +336,18 @@ def cmd_backtest(args) -> int:
         print()
 
     if args.trades:
-        print("  Trades")
-        print("  ------")
-        for trade in result.trades[: args.trades]:
-            print(
-                f"  {trade.side.value:<4} {trade.qty:>12.8f} "
-                f"{trade.entry_price:>10.2f} -> {trade.exit_price:>10.2f}  "
-                f"net {trade.net_pnl:>9.2f}  fees {trade.fees:>7.2f}  {trade.reason}"
-            )
-        print()
+        print(tradelog.render(
+            result.trades,
+            starting_cash=config.account.starting_cash,
+            currency=config.account.symbol,
+            limit=args.trades,
+        ))
+
+    if args.save_trades:
+        path = tradelog.write_csv(
+            args.save_trades, result.trades, starting_cash=config.account.starting_cash
+        )
+        print(f"  wrote {len(result.trades):,} trades to {path}\n")
 
     print("  A backtest is the best case. Live results are worse, always.\n")
     return 0
@@ -447,6 +496,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--refresh", action="store_true", help="re-download instead of using the cache")
     p.set_defaults(func=cmd_study)
 
+    p = sub.add_parser("trades", help="show every trade a strategy made")
+    p.add_argument("-s", "--strategy", help="strategy name (default: from config)")
+    p.add_argument("--symbol", help="stock ticker to download, e.g. SPY")
+    p.add_argument("--csv", help="use a local CSV of bars instead")
+    p.add_argument("--synthetic", action="store_true", help="use generated data, no network")
+    p.add_argument("--years", type=int, default=10)
+    p.add_argument("--bars", type=int, default=3000)
+    p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--cash", type=float, default=10_000.0)
+    p.add_argument("--limit", type=int, default=40, metavar="N",
+                   help="show the first N trades (0 for all). Default 40.")
+    p.add_argument("--csv-out", metavar="PATH", help="also export the full log to this CSV")
+    p.add_argument("--max-position", type=float, default=1.0)
+    p.add_argument("--kill-switch", type=float, default=0.99)
+    p.add_argument("--fee-bps", type=float, default=2.0)
+    p.add_argument("--spread-bps", type=float, default=1.0)
+    p.add_argument("--slippage-bps", type=float, default=2.0)
+    p.add_argument("--flat-fee", type=float, default=0.0)
+    p.add_argument("--refresh", action="store_true")
+    p.set_defaults(func=cmd_trades)
+
     p = sub.add_parser("fetch", help="download historical bars to CSV")
     p.add_argument("--bars", type=int, default=5000)
     p.add_argument("-o", "--output", default="data/history.csv")
@@ -459,6 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bars", type=int, default=3000)
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--trades", type=int, default=0, metavar="N", help="print the first N trades")
+    p.add_argument("--save-trades", metavar="PATH", help="export the full trade log to this CSV")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("paper", help="run automated on live data with simulated money")

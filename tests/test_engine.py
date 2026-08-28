@@ -261,6 +261,55 @@ class TestRebalanceThreshold(unittest.TestCase):
         self.assertAlmostEqual(portfolio.exposure(100.0), 0.4, places=2)
 
 
+class TestTrailingStop(unittest.TestCase):
+    """A stop that follows price down is not a stop."""
+
+    def _stops(self, closes):
+        from tradebot.strategies import build
+        from tradebot.strategies.base import Context
+
+        strategy = build("ema_cross", fast=2, slow=3, atr_period=2, stop_atr_multiple=1.0)
+        costs = CostModel()
+        seen = []
+        for i, close in enumerate(closes, start=1):
+            ctx = Context(exposure=0.0 if i == 1 else 1.0, equity=1000.0,
+                          costs=costs, avg_price=closes[0])
+            decision = strategy.on_candle(
+                candle(i, close, close * 1.01, close * 0.99, close), ctx
+            )
+            if decision.stop_loss is not None:
+                seen.append(decision.stop_loss)
+        return seen
+
+    def test_the_stop_rises_with_the_price(self):
+        stops = self._stops([100, 105, 110, 115, 120, 125])
+        self.assertTrue(all(b >= a for a, b in zip(stops, stops[1:])), stops)
+        self.assertGreater(stops[-1], stops[0])
+
+    def test_the_stop_never_falls_when_the_price_does(self):
+        rising = [100, 110, 120, 130, 140]
+        stops = self._stops(rising + [135, 125, 115, 105, 95])
+        self.assertTrue(
+            all(b >= a - 1e-9 for a, b in zip(stops, stops[1:])),
+            f"the stop retreated as price fell: {stops}",
+        )
+
+    def test_it_resets_once_the_position_is_closed(self):
+        from tradebot.strategies import build
+        from tradebot.strategies.base import Context
+
+        strategy = build("ema_cross", fast=2, slow=3, atr_period=2, stop_atr_multiple=1.0)
+        costs = CostModel()
+        held = Context(exposure=1.0, equity=1000.0, costs=costs, avg_price=100.0)
+        for i, close in enumerate([100, 200, 300, 400], start=1):
+            strategy.on_candle(candle(i, close, close, close, close), held)
+        high_stop = strategy._trail
+
+        flat = Context(exposure=0.0, equity=1000.0, costs=costs)
+        strategy.on_candle(candle(9, 50, 50, 50, 50), flat)
+        self.assertLess(strategy._trail, high_stop, "a new position must not inherit the old stop")
+
+
 class TestHaltBehaviour(unittest.TestCase):
     def test_a_halt_closes_an_open_position_rather_than_freezing_it(self):
         """Stopping trading must also mean stopping exposure."""
