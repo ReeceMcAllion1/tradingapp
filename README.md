@@ -235,6 +235,42 @@ python3 -m tradebot fetch --bars 20000        # then study any local bar files:
 python3 -m tradebot study --files "data/*_1h.csv" --fee-bps 7.5 --cash 1000
 ```
 
+## The one thing that showed a real edge
+
+Everything above loses to holding. The consistent mechanism is cost drag, so the
+obvious question is whether a trend filter's drawdown protection survives if you trade
+rarely enough for costs to stop mattering. That is `slow_trend`: hold above a long
+moving average, sit in cash below it, with a band around the line so price hovering
+there does not rack up trades.
+
+It is the first thing in this whole investigation with a defensible case, and the case
+is narrower than it first looks.
+
+**Crypto, hourly, 2.3 years, per instrument:**
+
+| instrument | market did | buy_and_hold | slow_trend | vs hold | drawdown |
+|---|---|---|---|---|---|
+| BTC | **rose** +19% | $1,193 | $918 | **−27.5pp** | 54% → 42% |
+| ETH | fell −17% | $827 | $971 | **+14.4pp** | 69% → 56% |
+| SOL | fell −37% | $627 | $1,175 | **+54.8pp** | 79% → 56% |
+
+The pattern is not subtle. It **lost on the one that rose and won on both that fell** —
+and it reduced the worst drawdown on all three, including the one where it cost money.
+
+Across the other tests: on ten US stocks over a decade (a historic bull market) it
+returned +188% against +347% for holding — 159 percentage points worse — while cutting
+the worst drawdown from 53% to 42%. On the stocks that collapsed it finished 2.7pp
+behind holding but cut drawdown from 88% to 64%.
+
+**So it is insurance, not an edge.** You pay a premium in rising markets and it pays out
+in falling ones. Its cost drag is 0.2%/year on daily bars, which is why it can afford
+to be wrong for years at a time — 161 trades a decade instead of 912.
+
+What would make me believe it more: other decades, other asset classes, and a window
+where the crypto market rose instead of fell. What is already convincing is the
+drawdown reduction, which held in **every single test**, and is the only effect here
+that has been consistent across markets, timeframes and direction.
+
 ## Seeing the trades
 
 Every number above can be checked, trade by trade:
@@ -304,9 +340,9 @@ python3 -m tradebot init-config    write a starter config.toml
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
-| `strategies/` | Five strategies, including buy-and-hold and two that fail instructively |
+| `strategies/` | Six strategies: a benchmark, two that fail instructively, and one that insures |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 172, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 183, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---

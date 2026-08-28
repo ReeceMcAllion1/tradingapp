@@ -9,6 +9,7 @@ from .benchmark import BuyAndHold
 from .mean_reversion import MeanReversion
 from .micro_scalp import MicroScalp
 from .never_lose import NeverLose
+from .slow_trend import SlowTrend
 from .trend import EmaCross
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "MeanReversion",
     "MicroScalp",
     "NeverLose",
+    "SlowTrend",
 ]

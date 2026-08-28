@@ -66,10 +66,19 @@ class Metrics:
 
     @property
     def cost_drag_annual_pct(self) -> float:
-        """Cost drag scaled to a year, so runs of different lengths compare."""
-        if self.years < 0.05:
+        """Cost drag scaled to a year, so runs of different lengths compare.
+
+        Unlike CAGR this is a linear scaling, not a compound one, so it stays
+        meaningful over short spans - and it needs to. A bot two days into a live run
+        that is already down 2% on fees is burning capital at a ruinous annual rate,
+        and suppressing the figure until a month has passed would hide the warning
+        exactly when acting on it is cheapest. Spans under a day are floored, only to
+        stop a handful of bars extrapolating to a nonsense number.
+        """
+        span = max(self.years, 1.0 / 365.0)
+        if span <= 0:
             return 0.0
-        return self.cost_drag_pct / self.years
+        return self.cost_drag_pct / span
 
     @property
     def cost_share_of_gross(self) -> float:
@@ -94,7 +103,7 @@ class Metrics:
             f"  Net P&L             {self.net_pnl:>14,.2f}   what you actually keep",
             "",
             f"  Cost drag           {self.cost_drag_pct:>13.2f}%   of starting capital"
-            + (f", {self.cost_drag_annual_pct:.1f}%/year" if self.years >= 0.05 else ""),
+            + (f", {self.cost_drag_annual_pct:,.0f}%/year at this rate" if self.years > 0 else ""),
             "",
             f"  Trades              {self.trades:>14,}",
             f"  Win rate, on price  {self.gross_win_rate * 100:>13.1f}%   before costs",
