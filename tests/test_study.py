@@ -366,3 +366,16 @@ class TestShortRunsAreReportedHonestly(unittest.TestCase):
         self.assertFalse(metrics.can_annualise)
         self.assertGreater(metrics.cost_drag_annual_pct, 0.0)
         self.assertIn("%/year at this rate", metrics.render())
+
+
+class TestSpanPhrasing(unittest.TestCase):
+    def test_it_reads_correctly_at_every_scale(self):
+        from tradebot.metrics import _too_short
+
+        minute, hour, day = 1 / 365 / 24 / 60, 1 / 365 / 24, 1 / 365
+        self.assertIn("1 minute -", _too_short(minute))
+        self.assertIn("2 minutes", _too_short(2 * minute))
+        self.assertIn("1.0 hour -", _too_short(hour))
+        self.assertIn("5.0 hours", _too_short(5 * hour))
+        self.assertIn("1.0 day -", _too_short(day))
+        self.assertIn("2.1 days", _too_short(2.1 * day))

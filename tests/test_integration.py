@@ -312,6 +312,30 @@ class TestLiveRunner(unittest.TestCase):
                 f"the resumed run re-processed bars at or before {stopped_at}",
             )
 
+    def test_max_bars_counts_bars_processed_not_bars_offered(self):
+        """Otherwise the skipped duplicate spends the budget and the run does nothing.
+
+        This is what `paper --max-bars 1` did once bars started being skipped: warm-up
+        ends on the newest closed bar, the stream offers that same bar, the runner
+        correctly ignores it - and then stopped, reporting that no bars were processed.
+        """
+        candles = SyntheticFeed(bars=200, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, strategy = self._counting_runner(tmp, RealisticFeed(candles, 100))
+            with contextlib.redirect_stdout(io.StringIO()):
+                runner.run(max_bars=2)
+
+            self.assertEqual(runner._bars, 2, "the budget was spent on a skipped bar")
+            self.assertEqual(len(runner.portfolio.equity_curve), 2)
+
+    def test_on_bar_reports_whether_it_did_anything(self):
+        candles = SyntheticFeed(bars=200, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, _ = self._counting_runner(tmp, RealisticFeed(candles, 100))
+            runner.warm_up()
+            self.assertFalse(runner.on_bar(candles[10]), "an old bar was reported as processed")
+            self.assertTrue(runner.on_bar(candles[150]))
+
     def test_an_out_of_order_bar_is_ignored(self):
         """An older bar would re-open a risk day that has already closed."""
         candles = SyntheticFeed(bars=200, seed=1).generate()

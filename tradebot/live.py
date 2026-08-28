@@ -125,14 +125,18 @@ class LiveRunner:
         )
 
         for candle in self.feed.stream():
-            self.on_bar(candle)
-            self._bars += 1
+            # Only bars that were actually processed count. Warm-up usually ends on the
+            # newest closed bar and the stream then offers it again, so counting every
+            # bar the feed hands over made "--max-bars 1" spend its whole budget on the
+            # one bar the runner is right to ignore, and stop having done nothing.
+            if self.on_bar(candle):
+                self._bars += 1
             if self._stop or (max_bars is not None and self._bars >= max_bars):
                 break
 
         self.shutdown()
 
-    def on_bar(self, candle: Candle) -> None:
+    def on_bar(self, candle: Candle) -> bool:
         # Bars must arrive strictly newer, once each. A feed can repeat one after a
         # reconnect or a paging overlap, and warm-up has usually already shown the
         # strategy the newest closed bar. Replaying it advances every indicator an
@@ -141,7 +145,7 @@ class LiveRunner:
         # day that has already closed.
         if candle.ts <= self._last_bar_ts:
             log.debug("ignoring bar %s: not newer than %s", candle.ts, self._last_bar_ts)
-            return
+            return False
         self._last_bar_ts = candle.ts
 
         fills = self.engine.process(candle)
@@ -168,6 +172,7 @@ class LiveRunner:
 
         self._maybe_reconcile()
         self.save_state()
+        return True
 
     def _record_closed_trades(self, price: float) -> None:
         """Append any newly closed round trips to the trade log.

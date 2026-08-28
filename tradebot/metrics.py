@@ -177,13 +177,19 @@ MIN_ANNUALISE_YEARS = 0.05
 def _too_short(years: float) -> str:
     """Say how long the run actually is, in a unit that reads sensibly at that size."""
     days = years * 365.0
+    hours = days * 24.0
     if days >= 1.0:
-        span = f"{days:,.1f} days"
-    elif days * 24.0 >= 1.0:
-        span = f"{days * 24.0:,.1f} hours"
+        span = _plural(days, "day", decimals=1)
+    elif hours >= 1.0:
+        span = _plural(hours, "hour", decimals=1)
     else:
-        span = f"{days * 24.0 * 60.0:,.0f} minutes"
+        span = _plural(hours * 60.0, "minute")
     return f"only {span} - too short to annualise"
+
+
+def _plural(value: float, noun: str, decimals: int = 0) -> str:
+    text = f"{value:,.{decimals}f}"
+    return f"{text} {noun}" if text in ("1", "1.0") else f"{text} {noun}s"
 
 
 def _cagr(start: float, end: float, years: float) -> float:
