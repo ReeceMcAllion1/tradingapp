@@ -301,6 +301,7 @@ class Engine:
             return None
 
         self.consecutive_rejections = 0
+        self.risk.record_order()
         for trade in self.portfolio.apply(fill):
             self.risk.record_trade_result(trade.net_pnl)
         return fill

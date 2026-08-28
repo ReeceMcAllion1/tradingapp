@@ -520,5 +520,60 @@ class TestCostsAreCharged(unittest.TestCase):
         self.assertGreater(portfolio.slippage_paid, 0.0)
 
 
+class TestDailyOrderCap(unittest.TestCase):
+    """The cap has to bind on what the engine actually sends, not on a counter."""
+
+    class Ladder(Strategy):
+        """Only ever adds: 10% of equity, then 20%, then 30%. Closes nothing, ever."""
+
+        name = "ladder"
+
+        def __init__(self):
+            self.weight = 0.0
+
+        def on_candle(self, c, ctx):
+            self.weight = min(1.0, self.weight + 0.1)
+            return Decision(self.weight, reason="add")
+
+    def test_scaling_in_cannot_walk_past_the_daily_cap(self):
+        """The evasion this closed: no round trip ever completes, so nothing was counted.
+
+        Every one of those orders pays commission and takes an API call, which is what
+        the cap is for. Counting round trips alone let a cap of three pass ten orders.
+        """
+        limits = RiskLimits(
+            max_position_pct=1.0, max_daily_loss_pct=0.99, max_drawdown_pct=0.99,
+            max_trades_per_day=3, min_trade_notional=1.0, cooldown_bars_after_loss=0,
+        )
+        engine, portfolio, _ = make_engine(self.Ladder(), cash=10_000.0, limits=limits)
+
+        # Thirty bars inside a single UTC day, so the counter never resets.
+        for i in range(30):
+            engine.process(candle(i, 100.0, 100.5, 99.5, 100.0))
+
+        self.assertLessEqual(
+            len(portfolio.fills), 3,
+            f"{len(portfolio.fills)} orders sent under a cap of 3",
+        )
+
+    def test_a_new_day_restores_the_budget(self):
+        limits = RiskLimits(
+            max_position_pct=1.0, max_daily_loss_pct=0.99, max_drawdown_pct=0.99,
+            max_trades_per_day=2, min_trade_notional=1.0, cooldown_bars_after_loss=0,
+        )
+        engine, portfolio, _ = make_engine(self.Ladder(), cash=10_000.0, limits=limits)
+
+        for i in range(10):
+            engine.process(candle(i, 100.0, 100.5, 99.5, 100.0))
+        first_day = len(portfolio.fills)
+
+        # A day and a bit later, in minutes.
+        for i in range(10):
+            engine.process(candle(2000 + i, 100.0, 100.5, 99.5, 100.0))
+
+        self.assertLessEqual(first_day, 2)
+        self.assertGreater(len(portfolio.fills), first_day, "the cap must lift overnight")
+
+
 if __name__ == "__main__":
     unittest.main()

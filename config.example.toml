@@ -40,7 +40,9 @@ flat_fee = 0.0            # flat commission per trade, in account currency.
 max_position_pct = 0.25       # never put more than 25% of equity into one position
 max_daily_loss_pct = 0.02     # down 2% today -> stop until tomorrow
 max_drawdown_pct = 0.20       # down 20% from peak -> kill switch, stop permanently
-max_trades_per_day = 20       # overtrading is how you pay fees for no reason
+max_trades_per_day = 20       # orders, not round trips - entering and exiting
+                              # both count, so this is 10 complete trades a day.
+                              # Overtrading is how you pay fees for no reason.
 min_trade_notional = 10.0     # ignore orders too small to be worth the cost
 min_edge_multiple = 2.0       # a signal must target 2x the round-trip cost to qualify
 cooldown_bars_after_loss = 3  # sit out a few bars after a loser

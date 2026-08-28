@@ -426,7 +426,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Six strategies: a benchmark, two that fail instructively, and one that insures |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 265, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 269, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
 every strategy's end-to-end result to the penny, so a change to fill pricing or bracket
@@ -542,7 +542,7 @@ These are what make the system safe to leave running. All are in `[risk]`.
 | `max_position_pct` | 25% | Never put more than this into one position |
 | `max_daily_loss_pct` | 2% | Down this much today → pause until tomorrow |
 | `max_drawdown_pct` | 20% | Down this much from peak → **kill switch**, stop permanently |
-| `max_trades_per_day` | 20 | Overtrading is how you pay fees for nothing |
+| `max_trades_per_day` | 20 | Orders, not round trips — both legs count, so 10 complete trades |
 | `min_edge_multiple` | 2× | A signal must target twice the round-trip cost to qualify |
 | `cooldown_bars_after_loss` | 3 | Sit out a few bars after a loser |
 | `allow_short` | off | Shorting is modelled without borrow cost or margin calls |

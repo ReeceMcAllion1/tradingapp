@@ -103,9 +103,42 @@ class TestThrottles(unittest.TestCase):
         risk.observe(0, book, 100.0)
 
         for _ in range(2):
-            risk.record_trade_result(1.0)
+            risk.record_order()
 
         self.assertFalse(risk.evaluate(0.25, book, 100.0).approved)
+
+    def test_the_cap_counts_orders_not_completed_round_trips(self):
+        """Otherwise a strategy that only ever adds is never capped at all.
+
+        Scaling in - 10% of equity, then 20%, then 30% - closes nothing, so a counter
+        that only moves on a completed round trip stays at zero forever while every one
+        of those orders pays commission.
+        """
+        risk = manager(max_trades_per_day=2)
+        book = Portfolio(starting_cash=1000.0)
+        risk.observe(0, book, 100.0)
+
+        for _ in range(5):
+            risk.record_trade_result(1.0)
+        self.assertTrue(
+            risk.evaluate(0.25, book, 100.0).approved,
+            "closing round trips must not consume the order budget on their own",
+        )
+
+        for _ in range(2):
+            risk.record_order()
+        self.assertFalse(risk.evaluate(0.25, book, 100.0).approved)
+
+    def test_the_cap_never_blocks_getting_out(self):
+        risk = manager(max_trades_per_day=1)
+        book = Portfolio(starting_cash=1000.0)
+        book.qty, book.avg_price = 5.0, 100.0
+        risk.observe(0, book, 100.0)
+        risk.record_order()
+
+        verdict = risk.evaluate(0.0, book, 100.0)
+        self.assertTrue(verdict.approved, "a full account must always be able to flatten")
+        self.assertAlmostEqual(verdict.target_weight, 0.0)
 
     def test_cooldown_after_a_loss_blocks_the_next_few_bars(self):
         risk = manager(cooldown_bars_after_loss=2)

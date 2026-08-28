@@ -84,7 +84,7 @@ class RiskManager:
     peak_equity: float = 0.0
     day: int = -1
     day_start_equity: float = 0.0
-    trades_today: int = 0
+    orders_today: int = 0
     cooldown_left: int = 0
     halted_reason: str | None = None
 
@@ -107,7 +107,7 @@ class RiskManager:
         if today != self.day:
             self.day = today
             self.day_start_equity = equity
-            self.trades_today = 0
+            self.orders_today = 0
             if self.halted_reason == "daily loss limit":
                 self.halted_reason = None
                 self._log(f"{_day_label(ts)}: new day, daily loss halt lifted")
@@ -167,7 +167,7 @@ class RiskManager:
         if self.cooldown_left > 0:
             return RiskVerdict(current, approved=False, reason=f"cooldown ({self.cooldown_left} bars left)")
 
-        if self.trades_today >= self.limits.max_trades_per_day:
+        if self.orders_today >= self.limits.max_trades_per_day:
             return RiskVerdict(current, approved=False, reason="daily trade cap reached")
 
         if increasing:
@@ -187,8 +187,23 @@ class RiskManager:
         """
         return abs(expected_move_pct) >= self.limits.min_edge_multiple * self.costs.breakeven_move_pct()
 
+    def record_order(self) -> None:
+        """Count one executed order against the daily cap.
+
+        Orders, not round trips. The cap exists because every order pays a fee and
+        takes an API call, and both of those are spent on the way *into* a position as
+        much as on the way out. Counting only completed round trips left the limit
+        trivially evadable: a strategy that scales in - 10% of equity, then 20%, then
+        30% - never closes anything, so the counter never moved and a cap of three
+        happily passed ten orders. Every one of those ten paid commission.
+
+        The cap only ever blocks opening or adding, never closing, so counting more
+        things here cannot trap anyone in a position.
+        """
+        self.orders_today += 1
+
     def record_trade_result(self, net_pnl: float) -> None:
-        self.trades_today += 1
+        """Start the post-loss cooldown if a round trip lost money."""
         if net_pnl < 0:
             self.cooldown_left = self.limits.cooldown_bars_after_loss
 
@@ -197,7 +212,7 @@ class RiskManager:
             "peak_equity": self.peak_equity,
             "day": self.day,
             "day_start_equity": self.day_start_equity,
-            "trades_today": self.trades_today,
+            "orders_today": self.orders_today,
             "cooldown_left": self.cooldown_left,
             "halted_reason": self.halted_reason,
         }
@@ -214,6 +229,10 @@ class RiskManager:
         except (TypeError, ValueError):
             self.day = -1
         self.day_start_equity = float(state.get("day_start_equity", 0.0))
-        self.trades_today = int(state.get("trades_today", 0))
+        # "trades_today" is what state files written before the counter moved from
+        # round trips to orders called this. Reading it keeps a running bot from
+        # resetting its daily count on restart; it undercounts for the rest of that
+        # one day, which is the cheap direction to be wrong in.
+        self.orders_today = int(state.get("orders_today", state.get("trades_today", 0)))
         self.cooldown_left = int(state.get("cooldown_left", 0))
         self.halted_reason = state.get("halted_reason")
