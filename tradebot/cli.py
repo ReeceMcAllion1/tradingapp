@@ -6,6 +6,7 @@
     python -m tradebot backtest         test a strategy on history
     python -m tradebot study            10 years of stocks vs buy-and-hold
     python -m tradebot trades           show every trade a strategy made
+    python -m tradebot sweep            how much of a result is real vs cherry-picked
     python -m tradebot paper            run automated, live data, simulated money
     python -m tradebot preflight        are you actually ready for real money?
     python -m tradebot verify-keys      read-only check that API keys work
@@ -23,6 +24,7 @@ from . import backtest as backtest_mod
 from . import config as config_mod
 from . import preflight as preflight_mod
 from . import study as study_mod
+from . import sweep as sweep_mod
 from . import tradelog
 from .brokers import CryptoComBroker, PaperBroker
 from .costs import CostModel
@@ -312,6 +314,45 @@ def cmd_trades(args) -> int:
     return 0
 
 
+def cmd_sweep(args) -> int:
+    """Run a strategy across a parameter grid and show the whole distribution."""
+    from glob import glob
+
+    paths = sorted(set(sum((glob(p) for p in args.files), [])))
+    if not paths:
+        raise SystemExit(f"no files matched: {' '.join(args.files)}")
+    series = study_mod.load_files(paths)
+
+    grid: dict[str, list] = {}
+    for spec in args.param:
+        if "=" not in spec:
+            raise SystemExit(f"bad --param {spec!r}; expected name=v1,v2,v3")
+        name, raw = spec.split("=", 1)
+        values = []
+        for token in raw.split(","):
+            token = token.strip()
+            values.append(float(token) if ("." in token or "e" in token.lower()) else int(token))
+        grid[name.strip()] = values
+    if not grid:
+        raise SystemExit("give at least one --param name=v1,v2,v3")
+
+    costs = CostModel(
+        taker_fee_bps=args.fee_bps, maker_fee_bps=args.fee_bps,
+        half_spread_bps=args.spread_bps, slippage_bps=args.slippage_bps,
+    )
+    result = sweep_mod.run(
+        series=series, strategy=args.strategy, grid=grid, starting_cash=args.cash,
+        costs=costs,
+        limits=RiskLimits(
+            max_position_pct=1.0, max_daily_loss_pct=0.99, max_drawdown_pct=0.99,
+            max_trades_per_day=10_000, min_trade_notional=1.0, cooldown_bars_after_loss=0,
+        ),
+        execution=ExecutionSettings(min_notional=1.0),
+    )
+    print(sweep_mod.render(result))
+    return 0
+
+
 def cmd_fetch(args) -> int:
     config = config_mod.load(args.config)
     feed = CryptoComFeed(symbol=config.market.symbol, interval=config.market.interval)
@@ -570,6 +611,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--flat-fee", type=float, default=0.0)
     p.add_argument("--refresh", action="store_true")
     p.set_defaults(func=cmd_trades)
+
+    p = sub.add_parser("sweep", help="run a parameter grid and show the full distribution")
+    p.add_argument("-s", "--strategy", required=True)
+    p.add_argument("--files", nargs="+", required=True, metavar="CSV", help="bar files (globs allowed)")
+    p.add_argument("--param", nargs="+", required=True, metavar="NAME=V1,V2",
+                   help="parameter grid, e.g. --param period=100,200,400 band_pct=0.0,0.02")
+    p.add_argument("--cash", type=float, default=1000.0)
+    p.add_argument("--fee-bps", type=float, default=7.5)
+    p.add_argument("--spread-bps", type=float, default=1.0)
+    p.add_argument("--slippage-bps", type=float, default=2.0)
+    p.set_defaults(func=cmd_sweep)
 
     p = sub.add_parser("fetch", help="download historical bars to CSV")
     p.add_argument("--bars", type=int, default=5000)

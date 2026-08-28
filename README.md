@@ -235,41 +235,59 @@ python3 -m tradebot fetch --bars 20000        # then study any local bar files:
 python3 -m tradebot study --files "data/*_1h.csv" --fee-bps 7.5 --cash 1000
 ```
 
-## The one thing that showed a real edge
+## The one candidate — and what a sweep did to it
 
-Everything above loses to holding. The consistent mechanism is cost drag, so the
-obvious question is whether a trend filter's drawdown protection survives if you trade
-rarely enough for costs to stop mattering. That is `slow_trend`: hold above a long
-moving average, sit in cash below it, with a band around the line so price hovering
-there does not rack up trades.
+Everything above loses to holding, and the mechanism is always cost drag. So the
+question worth asking is whether a trend filter's drawdown protection survives if you
+trade rarely enough for costs to stop mattering. That is `slow_trend`: hold above a
+long moving average, sit in cash below it, with a band around the line so price
+hovering there does not generate trades. Its cost drag is 0.2%/year on daily bars
+against `ema_cross`'s 1.4% — 161 trades a decade instead of 912.
 
-It is the first thing in this whole investigation with a defensible case, and the case
-is narrower than it first looks.
+At period 200 with a 2% band, on hourly crypto over 2.3 years, it beat buy-and-hold by
+13.9 points. **That number should not be trusted, and here is why.**
 
-**Crypto, hourly, 2.3 years, per instrument:**
+```
+$ python3 -m tradebot sweep -s slow_trend --files "data/*_1h.csv" \
+      --param period=100,200,400,600 band_pct=0.0,0.02,0.05
 
-| instrument | market did | buy_and_hold | slow_trend | vs hold | drawdown |
-|---|---|---|---|---|---|
-| BTC | **rose** +19% | $1,193 | $918 | **−27.5pp** | 54% → 42% |
-| ETH | fell −17% | $827 | $971 | **+14.4pp** | 69% → 56% |
-| SOL | fell −37% | $627 | $1,175 | **+54.8pp** | 79% → 56% |
+    period  band_pct |       BTC       ETH       SOL      mean   DD cut
+       100     0.000 |     -78.9     -37.7     -38.2     -51.6     -8.0
+       200     0.020 |     -27.5     +14.4     +54.8     +13.9    +16.2   <- the one I quoted
+       400     0.050 |      +3.1     +39.8     +47.0     +30.0    +26.5
+       600     0.020 |     +17.3    +140.2     +58.2     +71.9    +26.0
 
-The pattern is not subtle. It **lost on the one that rose and won on both that fell** —
-and it reduced the worst drawdown on all three, including the one where it cost money.
+  settings tested               12
+  beat buy-and-hold              9  of 12
+  best / worst               +71.9 / -51.6 pp
+  median                     +18.1 pp
+  spread                     123.5 pp
+```
 
-Across the other tests: on ten US stocks over a decade (a historic bull market) it
-returned +188% against +347% for holding — 159 percentage points worse — while cutting
-the worst drawdown from 53% to 42%. On the stocks that collapsed it finished 2.7pp
-behind holding but cut drawdown from 88% to 64%.
+The spread across reasonable parameters is **123 points**. Quoting any single cell —
+including the +71.9 — reports a choice, not a finding. This is the most common way
+backtests mislead, and it catches sincere people, which is why `sweep` is a first-class
+command rather than a footnote.
 
-**So it is insurance, not an edge.** You pay a premium in rising markets and it pays out
-in falling ones. Its cost drag is 0.2%/year on daily bars, which is why it can afford
-to be wrong for years at a time — 161 trades a decade instead of 912.
+**What actually survives the sweep:**
 
-What would make me believe it more: other decades, other asset classes, and a window
-where the crypto market rose instead of fell. What is already convincing is the
-drawdown reduction, which held in **every single test**, and is the only effect here
-that has been consistent across markets, timeframes and direction.
+1. **A mechanism, not a cell.** Results improve monotonically with a longer period and
+   a wider band. Both mean fewer trades. That trend is the same cost-drag story as
+   everywhere else in this file, and a trend across a grid is evidence in a way that a
+   winning cell is not.
+2. **Drawdown reduction.** Cut in 9 of 12 settings, median 15.7 points, and it held in
+   *every* separate test: 53%→42% on ten US stocks, 88%→64% on the collapsed ones, and
+   on all three crypto instruments including the one where it lost money. This is the
+   only effect in this entire investigation that has been consistent across markets,
+   timeframes, parameters and direction.
+3. **It is insurance, not an edge.** Per instrument it lost 27.5 points on BTC, which
+   rose, and won 14.4 and 54.8 on ETH and SOL, which fell. Premium paid in up markets,
+   payout in down ones. Over the ten-year stock bull run it finished 159 points behind
+   holding.
+
+So: no, I did not find a way to make money. I found one effect that is robust
+(smaller drawdowns), one that is not (higher returns), and a tool that tells the two
+apart.
 
 ## Seeing the trades
 
@@ -317,6 +335,7 @@ tail -f state/trades.csv
 python3 -m tradebot demo           the cost arithmetic, run on real data
 python3 -m tradebot study          stocks or local bar files, every strategy vs buy-and-hold
 python3 -m tradebot trades         every trade a strategy made, with a CSV export
+python3 -m tradebot sweep          how much of a result is real vs cherry-picked
 python3 -m tradebot strategies     list available strategies
 python3 -m tradebot fetch          download history to CSV
 python3 -m tradebot backtest       replay a strategy over history
@@ -336,13 +355,14 @@ python3 -m tradebot init-config    write a starter config.toml
 | `backtest.py` | Historical replay with no look-ahead |
 | `study.py` | Multi-symbol, multi-year comparison against buy-and-hold |
 | `tradelog.py` | The trade log: terminal table, CSV export, live append |
+| `sweep.py` | Parameter grids, so a lucky cell cannot pass as a finding |
 | `preflight.py` | Readiness checks that must pass before risking real money |
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Six strategies: a benchmark, two that fail instructively, and one that insures |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 183, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 189, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---
