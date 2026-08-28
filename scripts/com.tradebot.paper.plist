@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job for a long-running paper session (macOS).
+
+    cp scripts/com.tradebot.paper.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.tradebot.paper.plist
+    tail -f ~/tradingapp/state/paper_session.log
+
+  Replace USERNAME below. KeepAlive restarts it if it stops; state is saved after
+  every bar so restarts resume. Note that a sleeping laptop stops the job - for a
+  month-long run prefer a machine that stays awake.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.tradebot.paper</string>
+  <key>WorkingDirectory</key><string>/Users/USERNAME/tradingapp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string><string>-m</string><string>tradebot</string>
+    <string>--config</string><string>configs/paper.toml</string><string>paper</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/USERNAME/tradingapp/state/paper_session.log</string>
+  <key>StandardErrorPath</key><string>/Users/USERNAME/tradingapp/state/paper_session.log</string>
+</dict>
+</plist>

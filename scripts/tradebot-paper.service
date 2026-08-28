@@ -1,0 +1,29 @@
+# systemd unit for a long-running paper session (Linux).
+#
+#   sudo cp scripts/tradebot-paper.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tradebot-paper
+#   journalctl -u tradebot-paper -f
+#
+# Edit User, WorkingDirectory and the config path first. This runs PAPER trading;
+# it places no real orders and needs no API keys.
+
+[Unit]
+Description=tradebot paper trading
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=CHANGEME
+WorkingDirectory=/home/CHANGEME/tradingapp
+ExecStart=/usr/bin/python3 -m tradebot --config configs/paper.toml paper
+Restart=always
+RestartSec=15
+# Survives reboots and network drops; state is saved after every bar, so a restart
+# resumes rather than starting over.
+StandardOutput=append:/home/CHANGEME/tradingapp/state/paper_session.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

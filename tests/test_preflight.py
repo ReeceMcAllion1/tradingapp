@@ -230,3 +230,66 @@ class TestStatusReading(unittest.TestCase):
         (self.tmp / "state.json").write_text("{not json", encoding="utf-8")
         with self.assertRaises(SystemExit):
             self._run_status()
+
+
+class TestSessionReport(unittest.TestCase):
+    """The end-of-run verdict must not misread a session that is fully invested."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.config = Config()
+        self.config.live.state_file = str(self.tmp / "state.json")
+        self.config.live.trades_file = str(self.tmp / "trades.csv")
+        self.config.account.starting_cash = 1000.0
+
+    def _write_state(self, **engine):
+        import json
+        base = {"bars_seen": 100, "portfolio": {"qty": 0.0, "cash": 1000.0,
+                                                "fees_paid": 0.0, "slippage_paid": 0.0},
+                "risk": {"halted_reason": None}}
+        base.update(engine)
+        (self.tmp / "state.json").write_text(json.dumps({
+            "saved_at": 1_700_086_400_000, "started_at": 1_700_000_000_000,
+            "symbol": "BTC_USD", "interval": "1h", "strategy": "x", "engine": base,
+        }), encoding="utf-8")
+
+    def test_an_open_position_is_marked_to_market(self):
+        """A fully invested session holds no cash; reporting cash alone reads as ruin."""
+        from tradebot import report as report_mod
+        self._write_state(portfolio={"qty": 0.5, "cash": -1.0,
+                                     "fees_paid": 1.0, "slippage_paid": 0.0})
+        r = report_mod.load(self.config)
+        self.assertAlmostEqual(r.equity, -1.0)
+        report_mod.mark_to_market(r, price=2000.0)
+        self.assertAlmostEqual(r.equity, 999.0)
+        self.assertAlmostEqual(r.return_pct, -0.1, places=6)
+
+    def test_the_span_comes_from_the_recorded_start_not_the_trade_date(self):
+        from tradebot import report as report_mod
+        self._write_state()
+        r = report_mod.load(self.config)
+        self.assertAlmostEqual(r.days, 1.0, places=3)
+
+    def test_cost_drag_is_annualised_from_the_real_span(self):
+        from tradebot import report as report_mod
+        self._write_state(portfolio={"qty": 0.0, "cash": 1000.0,
+                                     "fees_paid": 8.0, "slippage_paid": 2.0})
+        r = report_mod.load(self.config)
+        self.assertAlmostEqual(r.cost_drag_pct, 1.0)
+        self.assertAlmostEqual(r.cost_drag_annual_pct, 365.0, places=0)
+
+    def test_a_short_run_is_labelled_as_insufficient(self):
+        from tradebot import report as report_mod
+        self._write_state()
+        text = report_mod.render([report_mod.load(self.config)])
+        self.assertIn("far too short to judge", text)
+
+    def test_a_missing_session_raises_rather_than_reporting_zeros(self):
+        from tradebot import report as report_mod
+        self.config.live.state_file = str(self.tmp / "nope.json")
+        with self.assertRaises(FileNotFoundError):
+            report_mod.load(self.config)
+
+    def test_nothing_to_report_is_handled(self):
+        from tradebot import report as report_mod
+        self.assertIn("No sessions", report_mod.render([]))

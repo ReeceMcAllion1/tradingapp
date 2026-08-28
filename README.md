@@ -388,6 +388,7 @@ python3 -m tradebot trades         every trade a strategy made, with a CSV expor
 python3 -m tradebot sweep          how much of a result is real vs cherry-picked
 python3 -m tradebot walkforward    would the choice have worked on unseen data?
 python3 -m tradebot status         check on a running session without stopping it
+python3 -m tradebot report         end-of-run verdict for one or more sessions
 python3 -m tradebot strategies     list available strategies
 python3 -m tradebot fetch          download history to CSV
 python3 -m tradebot backtest       replay a strategy over history
@@ -409,6 +410,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `tradelog.py` | The trade log: terminal table, CSV export, live append |
 | `sweep.py` | Parameter grids, so a lucky cell cannot pass as a finding |
 | `walkforward.py` | Out-of-sample validation: the check on every other number here |
+| `report.py` | End-of-run verdict, benchmarked against holding over the same window |
 | `preflight.py` | Readiness checks that must pass before risking real money |
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
@@ -419,6 +421,48 @@ Run the tests with `python3 -m unittest discover -s tests -t .` — there are 20
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---
+
+## Running it for days or weeks
+
+This is the workflow the whole repository points at, so it is a single command.
+Paper trading places no orders and needs no API keys.
+
+```bash
+./scripts/paper-run.sh start     # runs every config in configs/, restarts on crash
+./scripts/paper-run.sh status    # what each session is doing right now
+./scripts/paper-run.sh report    # the verdict so far, against buy-and-hold
+./scripts/paper-run.sh stop
+```
+
+Three sessions ship in `configs/`: `buy_and_hold` as the benchmark, `slow_trend` (the
+only strategy here with any validated effect), and `never_lose`. Running the benchmark
+alongside is the point — without it a return is unreadable.
+
+For a run that survives reboots, `scripts/tradebot-paper.service` (systemd) and
+`scripts/com.tradebot.paper.plist` (launchd) are ready to edit. State is saved after
+every bar, so a restart resumes rather than starting over — a crash costs one bar, not
+the session.
+
+**On a laptop:** a sleeping machine stops the bot. It will resume on wake, and the gap
+in its data is real, so prefer something that stays awake for a run you intend to
+judge.
+
+### Reading the result
+
+```
+  Session report - 14.2 days, 20,412 bars
+
+  strategy              final    return   vs hold  trades   wins     costs   cost/yr
+  buy_and_hold     £ 1,022.40    +2.24%         -       1      - £    1.00      0.3%
+  slow_trend       £ 1,008.10    +0.81%    -1.43p       4    3/4 £    4.10      1.1%
+  never_lose       £   995.08    -0.49%    -2.73p      31   31/31 £   26.62     68%
+```
+
+The `vs hold` and `cost/yr` columns are the ones to read. **Returns need a month at
+minimum and are thin evidence even then** — the backtests in this file are a better
+guide to whether a strategy works. **Cost drag is reliable within days**, because it
+does not depend on which way the market went, and it is what actually decides most of
+these outcomes.
 
 ## Getting started
 
@@ -438,8 +482,8 @@ python3 -m tradebot backtest --csv data/history.csv -s ema_cross --trades 20
 python3 -m tradebot paper             # automated, live data, simulated money
 ```
 
-Leave the paper run going for weeks. Use `nohup`, `screen`, or a systemd unit — it
-saves state after every bar, so it survives restarts. Check on it any time with
+Leave the paper run going for weeks — see **Running it for days or weeks** above for
+the supervised runner and the systemd/launchd units. Check on it any time with
 `python3 -m tradebot status`, which reads only the files the runner writes and is safe
 to call against a live bot.
 

@@ -69,6 +69,7 @@ class LiveRunner:
         self._stop = False
         self._bars = 0
         self._logged_trades = 0
+        self._started_at = int(time.time() * 1000)
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -231,6 +232,7 @@ class LiveRunner:
     def save_state(self) -> None:
         payload = {
             "saved_at": int(time.time() * 1000),
+            "started_at": self._started_at,
             "symbol": self.config.market.symbol,
             "interval": self.config.market.interval,
             "strategy": self.strategy.name,
@@ -261,6 +263,9 @@ class LiveRunner:
             )
             return False
 
+        # Keep the original start time across restarts, so a resumed run still reports
+        # its true age rather than restarting the clock.
+        self._started_at = int(payload.get("started_at") or self._started_at)
         self.engine.restore(payload["engine"])
         log.info(
             "resumed from %s: position %.8f, cash %.2f%s",

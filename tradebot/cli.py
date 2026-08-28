@@ -10,6 +10,7 @@
     python -m tradebot walkforward      would the choice have worked on unseen data?
     python -m tradebot paper            run automated, live data, simulated money
     python -m tradebot status           check on a run without stopping it
+    python -m tradebot report           end-of-run verdict, benchmarked against holding
     python -m tradebot preflight        are you actually ready for real money?
     python -m tradebot verify-keys      read-only check that API keys work
     python -m tradebot live             run automated with real money (heavily gated)
@@ -25,6 +26,7 @@ from pathlib import Path
 from . import backtest as backtest_mod
 from . import config as config_mod
 from . import preflight as preflight_mod
+from . import report as report_mod
 from . import study as study_mod
 from . import sweep as sweep_mod
 from . import walkforward as walkforward_mod
@@ -571,6 +573,46 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    """Summarise finished or running sessions, against what holding would have done."""
+    configs = args.configs or ([args.config] if args.config else [])
+    if not configs:
+        raise SystemExit("give one or more config files, e.g. report state/*.toml")
+
+    reports = []
+    for path in configs:
+        cfg = config_mod.load(path)
+        try:
+            reports.append(report_mod.load(cfg, name=Path(path).stem))
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"  skipping {path}: {exc}", file=sys.stderr)
+
+    if not reports:
+        raise SystemExit("no readable sessions")
+
+    # Mark open positions to market and work out what holding would have returned over
+    # the very same window, which is the only comparison that means anything.
+    if not args.offline:
+        for r in reports:
+            try:
+                bars = CryptoComFeed(
+                    symbol=r.symbol, interval=r.interval or "1m"
+                ).history(max(r.bars + 5, 50))
+                window = bars[-max(r.bars, 2):]
+                if len(window) >= 2:
+                    r.benchmark_return_pct = (window[-1].close / window[0].open - 1.0) * 100.0
+                    report_mod.mark_to_market(r, window[-1].close)
+            except Exception as exc:  # noqa: BLE001 - a missing benchmark must not lose the report
+                print(f"  (no benchmark for {r.name}: {exc})", file=sys.stderr)
+
+    print(report_mod.render(reports, currency=config_mod.load(configs[0]).account.symbol))
+    return 0
+
+
+def _position_of(report) -> float:
+    return getattr(report, "_qty", 0.0)
+
+
 def cmd_verify_keys(args) -> int:
     config = config_mod.load(args.config)
     broker = CryptoComBroker(symbol=config.market.symbol, costs=config.costs)
@@ -763,6 +805,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--years", type=int, default=10)
     p.add_argument("--skip-backtest", action="store_true", help="skip the benchmark comparison")
     p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("report", help="end-of-run verdict for one or more sessions")
+    p.add_argument("configs", nargs="*", metavar="CONFIG", help="session config files")
+    p.add_argument("--offline", action="store_true", help="skip the buy-and-hold benchmark")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("status", help="check on a running session without stopping it")
     p.add_argument("--recent", type=int, default=5, metavar="N", help="show the last N trades")

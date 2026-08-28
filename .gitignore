@@ -1,6 +1,9 @@
 # Local configuration - may contain venue-specific settings
 config.toml
 
+# configs/ holds committed session templates; local edits are yours
+configs/local_*.toml
+
 # Runtime state: positions, equity, logs
 state/
 *.log
