@@ -4,6 +4,7 @@ from .base import Feed, validate_series
 from .cryptocom import CryptoComFeed, FeedError
 from .csv_feed import CsvFeed, write_csv
 from .synthetic import SyntheticFeed
+from .yahoo import YahooError, YahooFeed, describe_span
 
 __all__ = [
     "Feed",
@@ -13,4 +14,7 @@ __all__ = [
     "CsvFeed",
     "write_csv",
     "SyntheticFeed",
+    "YahooFeed",
+    "YahooError",
+    "describe_span",
 ]

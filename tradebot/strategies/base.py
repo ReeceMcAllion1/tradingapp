@@ -29,6 +29,16 @@ class Context:
         return abs(self.exposure) < 1e-9
 
     @property
+    def hold_weight(self) -> float:
+        """Current exposure, clamped to a weight a ``Decision`` will accept.
+
+        Use this, not ``exposure``, when a strategy wants to keep the position it
+        already has. Measured exposure sits a fraction above 1.0 while fully invested,
+        because entry fees leave cash slightly negative.
+        """
+        return max(-1.0, min(1.0, self.exposure))
+
+    @property
     def breakeven_move_pct(self) -> float:
         """Percentage move needed to cover a round trip. Ignore this at your peril."""
         return self.costs.breakeven_move_pct()

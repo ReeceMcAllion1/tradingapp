@@ -32,10 +32,28 @@ from .types import Candle, Decision, Fill
 
 @dataclass
 class ExecutionSettings:
-    """Venue mechanics that affect whether an order is even possible."""
+    """Venue mechanics that affect whether an order is even possible.
+
+    ``rebalance_threshold`` is the minimum drift, as a fraction of equity, between the
+    position you have and the position you want before the engine will trade to close
+    the gap. Without it a strategy asking to stay "100% invested" trades every single
+    bar, because entry fees leave cash slightly negative and measured exposure
+    therefore sits a hair above its target forever. Those trades are pure cost.
+
+    ``max_resize_cost_share`` caps what a resize may cost as a fraction of the amount
+    it moves. This one is load-bearing rather than tidy. With a flat commission the
+    fee *itself* creates the drift, so correcting it pays another fee and drifts
+    further - a runaway loop that turns buy-and-hold into hundreds of trades and can
+    empty a small account on costs alone. Refusing to pay more than a tenth of the
+    moved notional to move it breaks the cycle.
+
+    Opening and closing are never blocked by either setting - only resizing.
+    """
 
     qty_step: float = 0.0
     min_notional: float = 10.0
+    rebalance_threshold: float = 0.005
+    max_resize_cost_share: float = 0.10
 
     def round_qty(self, qty: float) -> float:
         """Round down to the venue's lot size, so an order is never larger than intended."""
@@ -118,10 +136,20 @@ class Engine:
 
         # Both touched inside one bar: the candle cannot tell us which came first, so
         # assume the loss did. Anything else would flatter the backtest.
+        #
+        # Gaps are then resolved by order type, which cuts both ways. A stop is a
+        # market order: if the bar opened beyond it, the position is sold into the gap
+        # at the open, worse than the stop price. A take-profit is a limit order: if
+        # the bar opened beyond it, it fills at the open, better than the target.
+        # Filling both at the trigger price - the obvious implementation - flatters
+        # stops and penalises targets, which quietly distorts any strategy whose
+        # brackets sit inside a typical bar's range.
         if stop_hit:
-            exit_price, reason = stop, "stop loss"
+            reason = "stop loss"
+            exit_price = min(stop, candle.open) if long else max(stop, candle.open)
         else:
-            exit_price, reason = target, "take profit"
+            reason = "take profit"
+            exit_price = max(target, candle.open) if long else min(target, candle.open)
 
         self.pending = None  # the bracket overrides whatever the last bar wanted
         return self.close_position(float(exit_price), candle.ts, reason)
@@ -140,6 +168,12 @@ class Engine:
         if equity <= 0:
             return []
 
+        current = self.portfolio.exposure(price)
+        resizing = abs(target) > 1e-9 and abs(current) > 1e-9
+        if resizing and not self._resize_is_worth_it(target, current, equity):
+            self._refresh_brackets(decision)
+            return []
+
         target_qty = (target * equity) / price
         delta = target_qty - self.portfolio.qty
         delta = self.execution.round_qty(delta)
@@ -156,6 +190,26 @@ class Engine:
             return []
         self._record(ts, f"{fill.side.value} {fill.qty:.8f} @ {fill.price:.2f} - {decision.reason}")
         return [fill]
+
+    def _resize_is_worth_it(self, target: float, current: float, equity: float) -> bool:
+        """Should we trade to close the gap between the position held and wanted?
+
+        Only when the gap is big enough to be worth noticing, and only when fixing it
+        costs meaningfully less than the amount being moved. Both guards apply to
+        resizes alone; opening and closing always go through.
+        """
+        drift = abs(target - current)
+        if drift < self.execution.rebalance_threshold:
+            return False
+
+        moved = drift * equity
+        if moved <= 0:
+            return False
+
+        one_way_cost = self.costs.fee(moved) + moved * (
+            (self.costs.half_spread_bps + self.costs.slippage_bps) * 1e-4
+        )
+        return one_way_cost <= moved * self.execution.max_resize_cost_share
 
     def close_position(self, price: float, ts: int, reason: str) -> list[Fill]:
         if self.portfolio.is_flat:

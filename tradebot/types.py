@@ -43,6 +43,14 @@ class Candle:
         return (self.high + self.low + self.close) / 3.0
 
 
+#: How far past fully-invested a target weight may drift before it is treated as a
+#: strategy bug rather than accounting noise. A position held at 100% of equity
+#: measures slightly above 1.0 once entry fees have pushed cash negative, and a
+#: strategy that feeds its own exposure back as "hold what I have" would otherwise
+#: fail on a perfectly correct decision.
+WEIGHT_TOLERANCE = 0.05
+
+
 @dataclass(frozen=True)
 class Decision:
     """What a strategy wants the portfolio to look like after this bar.
@@ -51,6 +59,10 @@ class Decision:
     ``0.0`` is flat, ``1.0`` is fully long, ``-0.5`` is half-size short. Expressing
     intent as a target rather than as buy/sell orders means a strategy cannot
     accidentally double up or leak a position when a bar is missed or replayed.
+
+    Weights just past ±1 are clamped rather than rejected, because measured exposure
+    legitimately drifts there. Anything wilder is a bug in the strategy and raises -
+    a request for 5x leverage should never be quietly reinterpreted as 1x.
     """
 
     target_weight: float = 0.0
@@ -61,8 +73,13 @@ class Decision:
     def __post_init__(self) -> None:
         if not math.isfinite(self.target_weight):
             raise ValueError("target_weight must be finite")
+        if abs(self.target_weight) > 1.0 + WEIGHT_TOLERANCE:
+            raise ValueError(
+                f"target_weight {self.target_weight} is outside [-1, 1] by more than "
+                f"the {WEIGHT_TOLERANCE} tolerance - strategies must not ask for leverage"
+            )
         if abs(self.target_weight) > 1.0:
-            raise ValueError(f"target_weight {self.target_weight} outside [-1, 1]")
+            object.__setattr__(self, "target_weight", math.copysign(1.0, self.target_weight))
 
 
 @dataclass(frozen=True)

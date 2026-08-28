@@ -42,9 +42,10 @@ class CostModel:
     maker_fee_bps: float = 5.0
     half_spread_bps: float = 2.0
     slippage_bps: float = 2.0
+    flat_fee: float = 0.0
 
     def __post_init__(self) -> None:
-        for name in ("taker_fee_bps", "maker_fee_bps", "half_spread_bps", "slippage_bps"):
+        for name in ("taker_fee_bps", "maker_fee_bps", "half_spread_bps", "slippage_bps", "flat_fee"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must not be negative")
 
@@ -57,17 +58,29 @@ class CostModel:
 
     def fee(self, notional: float, liquidity: Liquidity = Liquidity.TAKER) -> float:
         rate = self.taker_fee_bps if liquidity is Liquidity.TAKER else self.maker_fee_bps
-        return abs(notional) * rate * BPS
+        return abs(notional) * rate * BPS + self.flat_fee
 
     @property
     def round_trip_bps(self) -> float:
-        """Total cost of opening and closing one position, in basis points."""
+        """Proportional cost of opening and closing one position, in basis points.
+
+        This excludes ``flat_fee``, which is not proportional to anything - use
+        ``breakeven_cash`` or ``breakeven_move_pct(notional)`` when a flat fee applies.
+        """
         return 2.0 * (self.half_spread_bps + self.slippage_bps + self.taker_fee_bps)
 
-    def breakeven_move_pct(self) -> float:
-        """How far price must move in your favour just to break even, as a percent."""
-        return self.round_trip_bps * BPS * 100.0
+    def breakeven_move_pct(self, notional: float | None = None) -> float:
+        """How far price must move in your favour just to break even, as a percent.
+
+        With a flat commission this depends on position size, and brutally so for small
+        accounts: a £6 round trip is 0.6% of a £1,000 position but 6% of a £100 one.
+        Pass ``notional`` whenever you know it.
+        """
+        proportional = self.round_trip_bps * BPS * 100.0
+        if notional is None or self.flat_fee <= 0 or notional <= 0:
+            return proportional
+        return self.breakeven_cash(notional) / abs(notional) * 100.0
 
     def breakeven_cash(self, notional: float) -> float:
         """Cash a round trip on ``notional`` costs you before any profit exists."""
-        return abs(notional) * self.round_trip_bps * BPS
+        return abs(notional) * self.round_trip_bps * BPS + 2.0 * self.flat_fee

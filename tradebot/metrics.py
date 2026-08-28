@@ -26,6 +26,8 @@ class Metrics:
     starting_equity: float
     ending_equity: float
     total_return_pct: float
+    cagr_pct: float
+    years: float
     gross_pnl: float
     net_pnl: float
     fees_paid: float
@@ -61,6 +63,7 @@ class Metrics:
             f"  Starting equity     {self.starting_equity:>14,.2f}",
             f"  Ending equity       {self.ending_equity:>14,.2f}",
             f"  Total return        {self.total_return_pct:>13.2f}%",
+            f"  Annualised (CAGR)   {self.cagr_pct:>13.2f}%   over {self.years:.1f} years",
             "",
             f"  Gross P&L           {self.gross_pnl:>14,.2f}   the market move, mid to mid",
             f"  Spread + slippage   {-self.slippage_paid:>14,.2f}",
@@ -96,6 +99,17 @@ class Metrics:
                 "     Trade less often, or target bigger moves.",
             ]
         return "\n".join(lines) + "\n"
+
+
+def _cagr(start: float, end: float, years: float) -> float:
+    """Compound annual growth rate, as a percent.
+
+    Undefined for a wiped-out account (you cannot annualise a total loss), and
+    meaningless over a span too short to annualise, so both return 0.
+    """
+    if start <= 0 or end <= 0 or years < 0.05:
+        return 0.0
+    return ((end / start) ** (1.0 / years) - 1.0) * 100.0
 
 
 def _max_drawdown(curve: list[EquityPoint]) -> float:
@@ -146,6 +160,7 @@ def summarise(
     halted_reason: str | None = None,
 ) -> Metrics:
     ending = curve[-1].equity if curve else starting_equity
+    years = (curve[-1].ts - curve[0].ts) / MS_PER_YEAR if len(curve) > 1 else 0.0
     wins = [t for t in trades if t.net_pnl > 0]
     losses = [t for t in trades if t.net_pnl <= 0]
     gross_wins_count = sum(1 for t in trades if t.gross_pnl > 0)
@@ -162,6 +177,8 @@ def summarise(
         starting_equity=starting_equity,
         ending_equity=ending,
         total_return_pct=(ending / starting_equity - 1.0) * 100.0 if starting_equity else 0.0,
+        cagr_pct=_cagr(starting_equity, ending, years),
+        years=years,
         gross_pnl=sum(t.gross_pnl for t in trades),
         net_pnl=ending - starting_equity,
         fees_paid=fees_paid,

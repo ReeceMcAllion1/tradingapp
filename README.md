@@ -64,10 +64,62 @@ accounts lose money, and they are not exaggerating.
 
 ---
 
+## The ten-year test
+
+`python3 -m tradebot study` runs every strategy against ten years of daily stock
+data and compares each one to simply buying the stock and holding it. Here is the
+result over **2016-08-29 to 2026-08-27**, ten US stocks (SPY, AAPL, MSFT, JNJ, XOM,
+KO, GE, F, INTC, BA), 2,513 trading days each, $10,000 per run, dividend- and
+split-adjusted prices, costs of 2bp commission + 1bp half-spread + 2bp slippage:
+
+| strategy | final | total | CAGR | max drawdown | trades | costs | vs buy-and-hold |
+|---|---|---|---|---|---|---|---|
+| **buy_and_hold** | **$44,717** | **+347%** | **13.70%** | 52.9% | 10 | $27 | — |
+| ema_cross | $23,389 | +134% | 6.85% | 44.8% | 369 | $592 | **−213pp** |
+| mean_reversion | $12,031 | +20% | 1.39% | 43.3% | 408 | $414 | **−327pp** |
+| micro_scalp | $1,041 | **−90%** | −25.24% | 89.8% | 11,075 | $4,389 | **−437pp** |
+
+**2 of 30 strategy runs beat buying and holding.** Both were single lucky pairings
+(ema_cross on GE, mean_reversion on BA); with 30 combinations tested, a couple of
+winners is what chance alone produces.
+
+Three things worth taking from that table.
+
+**Trading lost to not trading, badly.** ema_cross more than doubled the money and
+still finished $21,000 behind doing nothing. It is not a bad strategy — it cut the
+worst drawdown from 53% to 45% — it just spent a decade paying costs and sitting in
+cash during rallies.
+
+**The few-pence strategy did not merely underperform, it destroyed the account.** It
+turned $10,000 into $1,041 while paying **$4,389 in costs** — 44% of the starting
+account, spread over 11,075 trades. And it fails twice over: not only do costs exceed
+each tiny win, but capping gains at +0.05% while letting losses run to a −2% stop
+gives a payoff ratio around 1:2.6, needing a ~72% win rate just to break even before
+costs. It got 34%.
+
+**Flat commissions are what actually kills small accounts.** Re-running with a £6
+flat fee per trade, typical of a UK broker, on a £1,000 account: buy-and-hold
+finished at £8,969 having paid £17 in total costs, while micro_scalp finished at £4
+having paid **£1,030 in costs — more than the entire starting account**. At £1,000 a
+£6 round trip is 1.3% before the price moves at all.
+
+Reproduce any of it:
+
+```bash
+python3 -m tradebot study --years 10
+python3 -m tradebot study --years 10 --cash 1000 --flat-fee 6 --symbols SPY,AAPL,MSFT
+```
+
+Caveats I would want if I were reading this: it is one decade, one that happened to
+be a historic bull market, using tickers that are famous today precisely because they
+survived — a survivorship bias that flatters buy-and-hold. It is still the fairest
+comparison available, and the direction of the result is not subtle.
+
 ## What you get
 
 ```
 python3 -m tradebot demo           the cost arithmetic, run on real data
+python3 -m tradebot study          10 years of stocks, every strategy vs buy-and-hold
 python3 -m tradebot strategies     list available strategies
 python3 -m tradebot fetch          download history to CSV
 python3 -m tradebot backtest       replay a strategy over history
@@ -84,12 +136,13 @@ python3 -m tradebot init-config    write a starter config.toml
 | `engine.py` | The decision → risk → order pipeline, shared by backtest and live |
 | `portfolio.py` | Cash, positions and P&L, split into gross / slippage / commission |
 | `backtest.py` | Historical replay with no look-ahead |
+| `study.py` | Multi-symbol, multi-year comparison against buy-and-hold |
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
-| `feeds/` | Crypto.com public data, CSV files, and a synthetic generator |
-| `strategies/` | Three strategies, including the one that demonstrates the problem |
+| `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
+| `strategies/` | Four strategies, including buy-and-hold and the one that fails |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 95, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 125, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---
@@ -126,6 +179,11 @@ Most backtests are optimistic in four specific ways. This one is not:
 - **Ambiguous bars.** If a bar's range touched both your stop and your target, the
   engine assumes the stop hit first. A candle cannot say which came first, so it
   takes the pessimistic reading.
+- **Gaps.** A stop is a market order, so a bar that opens below it sells into the gap
+  at the open, worse than the stop price. A take-profit is a limit order, so a bar
+  that opens above it fills at the open, better than the target. Filling both at the
+  trigger price is the obvious implementation and it quietly distorts any strategy
+  whose brackets sit inside a normal day's range.
 - **Indicators.** All of them are streaming and see one bar at a time, so a backtest
   and a live run compute identical values.
 
@@ -246,4 +304,8 @@ The honest path, in order:
 
 The largest edge available to you is not a better strategy. It is trading less,
 paying less, and not blowing up — which is exactly what the risk limits in this
-system are for.
+system are for, and exactly what the ten-year table above measures.
+
+And if after all that the honest answer is that a low-cost index fund held for a
+decade beat everything here by 200 percentage points, that is a real answer worth
+having. It cost you a weekend to find out rather than a decade of fees.

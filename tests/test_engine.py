@@ -101,6 +101,36 @@ class TestBrackets(unittest.TestCase):
         self.assertTrue(portfolio.is_flat)
         self.assertAlmostEqual(portfolio.trades[-1].exit_price, 110.0)
 
+    def test_a_gap_below_the_stop_fills_at_the_open_not_the_stop(self):
+        """A stop is a market order: gapping through it costs you the gap."""
+        strategy = Scripted([Decision(1.0, stop_loss=90.0)] * 4)
+        engine, portfolio, _ = make_engine(strategy)
+
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 100, 100, 100))
+        engine.process(candle(3, 80, 82, 79, 81))
+
+        self.assertTrue(portfolio.is_flat)
+        self.assertAlmostEqual(
+            portfolio.trades[-1].exit_price, 80.0,
+            msg="sold into the gap at the open, not at the untouchable 90 stop",
+        )
+
+    def test_a_gap_above_the_target_fills_at_the_open_not_the_target(self):
+        """A take-profit is a limit order: gapping through it fills in your favour."""
+        strategy = Scripted([Decision(1.0, take_profit=110.0)] * 4)
+        engine, portfolio, _ = make_engine(strategy)
+
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 100, 100, 100))
+        engine.process(candle(3, 120, 122, 119, 121))
+
+        self.assertTrue(portfolio.is_flat)
+        self.assertAlmostEqual(
+            portfolio.trades[-1].exit_price, 120.0,
+            msg="filled at the better gap-open price, not capped at the 110 target",
+        )
+
     def test_stop_wins_when_a_bar_touches_both(self):
         """A bar cannot say which came first, so the engine must assume the loss did."""
         strategy = Scripted([Decision(1.0, stop_loss=90.0, take_profit=110.0)] * 3)
@@ -154,6 +184,81 @@ class TestSizing(unittest.TestCase):
         engine.process(candle(1, 100, 100, 100, 100))
         engine.process(candle(2, 100, 100, 100, 100))
         self.assertTrue(portfolio.is_flat, "a £1 order should not be sent when the minimum is £50")
+
+
+class TestRebalanceThreshold(unittest.TestCase):
+    def test_small_drift_does_not_trigger_a_trade(self):
+        """Staying 'fully invested' must not mean trading every single bar."""
+        strategy = Scripted([Decision(1.0)] * 10)
+        costs = CostModel(taker_fee_bps=10, maker_fee_bps=10, half_spread_bps=2, slippage_bps=2)
+        portfolio = Portfolio(starting_cash=10_000.0)
+        risk = RiskManager(
+            limits=RiskLimits(max_position_pct=1.0, min_trade_notional=0.0, max_trades_per_day=10_000),
+            costs=costs,
+        )
+        engine = Engine(
+            strategy=strategy, portfolio=portfolio, risk=risk, costs=costs,
+            execution=ExecutionSettings(min_notional=0.0, rebalance_threshold=0.005),
+        )
+
+        for i in range(1, 9):
+            engine.process(candle(i, 100, 100, 100, 100))
+
+        self.assertEqual(len(portfolio.fills), 1, "one entry, then nothing to correct")
+
+    def test_the_threshold_never_blocks_closing_a_position(self):
+        strategy = Scripted([Decision(1.0), Decision(1.0), Decision(0.0), Decision(0.0)])
+        costs = CostModel(taker_fee_bps=0, maker_fee_bps=0, half_spread_bps=0, slippage_bps=0)
+        portfolio = Portfolio(starting_cash=10_000.0)
+        risk = RiskManager(
+            limits=RiskLimits(max_position_pct=1.0, min_trade_notional=0.0), costs=costs
+        )
+        engine = Engine(
+            strategy=strategy, portfolio=portfolio, risk=risk, costs=costs,
+            execution=ExecutionSettings(min_notional=0.0, rebalance_threshold=0.9),
+        )
+
+        for i in range(1, 5):
+            engine.process(candle(i, 100, 100, 100, 100))
+
+        self.assertTrue(portfolio.is_flat, "an exit is not a resize and must always go through")
+
+    def test_a_flat_fee_does_not_start_a_runaway_rebalance_loop(self):
+        """Regression: the fee creates the drift, so correcting it drifts further.
+
+        With a flat commission large relative to the position, an entry fee pushes
+        measured exposure past the rebalance threshold. Trading to correct that pays
+        another flat fee and widens the gap again. Left unguarded this turns a
+        buy-and-hold into hundreds of trades and empties the account on costs.
+        """
+        strategy = Scripted([Decision(1.0)] * 40)
+        costs = CostModel(taker_fee_bps=0, maker_fee_bps=0, half_spread_bps=1,
+                          slippage_bps=2, flat_fee=6.0)
+        portfolio = Portfolio(starting_cash=1000.0)
+        risk = RiskManager(
+            limits=RiskLimits(max_position_pct=1.0, min_trade_notional=0.0,
+                              max_trades_per_day=10_000),
+            costs=costs,
+        )
+        engine = Engine(
+            strategy=strategy, portfolio=portfolio, risk=risk, costs=costs,
+            execution=ExecutionSettings(min_notional=0.0, rebalance_threshold=0.005),
+        )
+
+        for i in range(1, 35):
+            engine.process(candle(i, 100, 100, 100, 100))
+
+        self.assertEqual(len(portfolio.fills), 1, "must buy once and then stop trading")
+        self.assertLess(portfolio.fees_paid, 10.0, "one flat fee, not dozens")
+
+    def test_a_large_deliberate_resize_still_trades(self):
+        strategy = Scripted([Decision(1.0), Decision(1.0), Decision(0.4), Decision(0.4)])
+        engine, portfolio, _ = make_engine(strategy, cash=10_000.0)
+
+        for i in range(1, 5):
+            engine.process(candle(i, 100, 100, 100, 100))
+
+        self.assertAlmostEqual(portfolio.exposure(100.0), 0.4, places=2)
 
 
 class TestHaltBehaviour(unittest.TestCase):

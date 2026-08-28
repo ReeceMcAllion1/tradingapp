@@ -4,6 +4,7 @@
     python -m tradebot strategies       list what is available
     python -m tradebot fetch            download history to CSV
     python -m tradebot backtest         test a strategy on history
+    python -m tradebot study            10 years of stocks vs buy-and-hold
     python -m tradebot paper            run automated, live data, simulated money
     python -m tradebot verify-keys      read-only check that API keys work
     python -m tradebot live             run automated with real money (heavily gated)
@@ -18,9 +19,13 @@ from pathlib import Path
 
 from . import backtest as backtest_mod
 from . import config as config_mod
+from . import study as study_mod
 from .brokers import CryptoComBroker, PaperBroker
+from .costs import CostModel
+from .engine import ExecutionSettings
 from .feeds import CryptoComFeed, CsvFeed, FeedError, SyntheticFeed, write_csv
 from .live import LiveRunner, configure_logging
+from .risk import RiskLimits
 from .strategies import available, build
 from .types import Candle
 
@@ -168,6 +173,83 @@ def cmd_demo(args) -> int:
   this data, not a bug, and it is what most strategies do most of the time. None of
   them is a licence to print money. Test on your own data, on your own fees, then
   paper trade for weeks before you risk anything.
+""")
+    return 0
+
+
+DEFAULT_STUDY_SYMBOLS = "SPY,AAPL,MSFT,JNJ,XOM,KO,GE,F,INTC,BA"
+
+
+def cmd_study(args) -> int:
+    """Backtest strategies over years of daily stock data, against buy-and-hold."""
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    names = [s.strip() for s in args.strategies.split(",") if s.strip()]
+
+    costs = CostModel(
+        taker_fee_bps=args.fee_bps,
+        maker_fee_bps=args.fee_bps,
+        half_spread_bps=args.spread_bps,
+        slippage_bps=args.slippage_bps,
+        flat_fee=args.flat_fee,
+    )
+    limits = RiskLimits(
+        max_position_pct=args.max_position,
+        max_daily_loss_pct=0.99,
+        max_drawdown_pct=args.kill_switch,
+        max_trades_per_day=1000,
+        min_trade_notional=1.0,
+        cooldown_bars_after_loss=0,
+        allow_short=False,
+    )
+
+    print(BANNER)
+    print(f"  Historical study: {args.years} years of daily bars, {len(symbols)} symbols")
+    print(f"  Starting cash {args.cash:,.0f} per symbol, per strategy")
+    print(
+        f"  Costs: {args.fee_bps:.1f} bp commission, {args.spread_bps:.1f} bp half-spread, "
+        f"{args.slippage_bps:.1f} bp slippage, {args.flat_fee:.2f} flat per trade"
+    )
+    print(f"  Round trip: {costs.breakeven_move_pct():.3f}% proportional", end="")
+    if args.flat_fee > 0:
+        example = args.cash * args.max_position
+        print(f", {costs.breakeven_move_pct(example):.3f}% on a {example:,.0f} position")
+    else:
+        print()
+    if args.kill_switch >= 0.99:
+        print("  Drawdown kill switch: OFF (so strategies can be compared over the full period)")
+    else:
+        print(f"  Drawdown kill switch: {args.kill_switch:.0%}")
+    print("\n  Loading data...")
+
+    result = study_mod.run(
+        symbols=symbols,
+        strategy_names=names,
+        years=args.years,
+        starting_cash=args.cash,
+        costs=costs,
+        limits=limits,
+        execution=ExecutionSettings(min_notional=1.0),
+        refresh=args.refresh,
+        progress=print,
+    )
+
+    if not result.rows:
+        raise SystemExit("no data could be loaded for any symbol")
+
+    print(study_mod.render(result, currency="$", starting_cash=args.cash))
+
+    if result.failures:
+        print("  Symbols that failed to load:")
+        for symbol, reason in result.failures.items():
+            print(f"    {symbol}: {reason}")
+        print()
+
+    print("""  What this is and is not
+
+  This is a backtest over one particular decade, on survivors you can name today.
+  It is not evidence that any of these strategies will work next year. Read the
+  "vs hold" column first and the return column second - in a bull market almost
+  anything long makes money, so beating buy-and-hold is the only real test.
 """)
     return 0
 
@@ -344,6 +426,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("strategies", help="list available strategies")
     p.set_defaults(func=cmd_strategies)
+
+    p = sub.add_parser("study", help="backtest strategies over years of stock data vs buy-and-hold")
+    p.add_argument("--symbols", default=DEFAULT_STUDY_SYMBOLS, help="comma-separated tickers")
+    p.add_argument(
+        "--strategies", default="ema_cross,mean_reversion,micro_scalp",
+        help="comma-separated strategy names (buy_and_hold is always added)",
+    )
+    p.add_argument("--years", type=int, default=10)
+    p.add_argument("--cash", type=float, default=10_000.0, help="starting cash per run")
+    p.add_argument("--max-position", type=float, default=1.0, help="max fraction of equity per position")
+    p.add_argument(
+        "--kill-switch", type=float, default=0.99, metavar="PCT",
+        help="halt permanently at this drawdown (default 0.99 = effectively off)",
+    )
+    p.add_argument("--fee-bps", type=float, default=2.0, help="commission in basis points")
+    p.add_argument("--spread-bps", type=float, default=1.0, help="half-spread in basis points")
+    p.add_argument("--slippage-bps", type=float, default=2.0)
+    p.add_argument("--flat-fee", type=float, default=0.0, help="flat commission per trade")
+    p.add_argument("--refresh", action="store_true", help="re-download instead of using the cache")
+    p.set_defaults(func=cmd_study)
 
     p = sub.add_parser("fetch", help="download historical bars to CSV")
     p.add_argument("--bars", type=int, default=5000)
