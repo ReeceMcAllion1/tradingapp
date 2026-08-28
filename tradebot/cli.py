@@ -7,6 +7,7 @@
     python -m tradebot study            10 years of stocks vs buy-and-hold
     python -m tradebot trades           show every trade a strategy made
     python -m tradebot paper            run automated, live data, simulated money
+    python -m tradebot preflight        are you actually ready for real money?
     python -m tradebot verify-keys      read-only check that API keys work
     python -m tradebot live             run automated with real money (heavily gated)
 """
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from . import backtest as backtest_mod
 from . import config as config_mod
+from . import preflight as preflight_mod
 from . import study as study_mod
 from . import tradelog
 from .brokers import CryptoComBroker, PaperBroker
@@ -375,6 +377,44 @@ def cmd_paper(args) -> int:
     return 0
 
 
+def cmd_preflight(args) -> int:
+    """Report honestly whether this setup is ready to risk real money."""
+    config = config_mod.load(args.config)
+    verdict = None
+
+    if not args.skip_backtest:
+        try:
+            strategy = _build_strategy(args, config)
+            candles = study_mod.load_symbol(args.benchmark_symbol.upper(), years=args.years)
+            common = dict(
+                candles=candles, starting_cash=10_000.0, costs=config.costs,
+                limits=RiskLimits(
+                    max_position_pct=1.0, max_daily_loss_pct=0.99, max_drawdown_pct=0.99,
+                    max_trades_per_day=1000, min_trade_notional=1.0, cooldown_bars_after_loss=0,
+                ),
+                execution=ExecutionSettings(min_notional=1.0),
+            )
+            active = backtest_mod.run(strategy=strategy, **common).metrics
+            passive = backtest_mod.run(strategy=build("buy_and_hold"), **common).metrics
+            gap = active.total_return_pct - passive.total_return_pct
+            verdict = (
+                gap > 0,
+                f"{strategy.name} returned {active.total_return_pct:+.1f}% vs "
+                f"{passive.total_return_pct:+.1f}% for holding {args.benchmark_symbol.upper()} "
+                f"over {active.years:.0f} years ({gap:+.1f}pp). "
+                + ("It beat holding on this data - test other symbols and periods before "
+                   "believing it." if gap > 0 else
+                   "Holding won. Trading this strategy would have cost you money you "
+                   "would have had by doing nothing."),
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed check must not hide the rest
+            print(f"  (could not run the benchmark backtest: {exc})", file=sys.stderr)
+
+    checks = preflight_mod.run(config, backtest_verdict=verdict)
+    print(preflight_mod.render(checks))
+    return 1 if any(not c.passed and c.blocking for c in checks) else 0
+
+
 def cmd_verify_keys(args) -> int:
     config = config_mod.load(args.config)
     broker = CryptoComBroker(symbol=config.market.symbol, costs=config.costs)
@@ -536,6 +576,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-s", "--strategy", help="strategy name (default: from config)")
     p.add_argument("--max-bars", type=int, help="stop after N bars (default: run forever)")
     p.set_defaults(func=cmd_paper)
+
+    p = sub.add_parser("preflight", help="check whether you are ready to trade real money")
+    p.add_argument("-s", "--strategy", help="strategy to evaluate (default: from config)")
+    p.add_argument("--benchmark-symbol", default="SPY", help="symbol to test against buy-and-hold")
+    p.add_argument("--years", type=int, default=10)
+    p.add_argument("--skip-backtest", action="store_true", help="skip the benchmark comparison")
+    p.set_defaults(func=cmd_preflight)
 
     p = sub.add_parser("verify-keys", help="read-only check that API credentials work")
     p.set_defaults(func=cmd_verify_keys)

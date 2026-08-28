@@ -242,6 +242,7 @@ python3 -m tradebot strategies     list available strategies
 python3 -m tradebot fetch          download history to CSV
 python3 -m tradebot backtest       replay a strategy over history
 python3 -m tradebot paper          run automated: live data, simulated money
+python3 -m tradebot preflight      are you actually ready for real money?
 python3 -m tradebot verify-keys    read-only check that your API keys work
 python3 -m tradebot live           run automated with real money (four gates)
 python3 -m tradebot init-config    write a starter config.toml
@@ -256,12 +257,13 @@ python3 -m tradebot init-config    write a starter config.toml
 | `backtest.py` | Historical replay with no look-ahead |
 | `study.py` | Multi-symbol, multi-year comparison against buy-and-hold |
 | `tradelog.py` | The trade log: terminal table, CSV export, live append |
+| `preflight.py` | Readiness checks that must pass before risking real money |
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Five strategies, including buy-and-hold and two that fail instructively |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 148, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 162, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---
@@ -336,6 +338,19 @@ never trap you in a trade.
 
 ## Going live
 
+Before any of the mechanics, run:
+
+```bash
+python3 -m tradebot preflight
+```
+
+The four gates below stop an *accident*. They cannot tell you whether going live is a
+good idea, because a config flag knows nothing about whether the strategy works.
+`preflight` asks the substantive questions instead, from evidence on disk: have you
+paper traded, for how long, did it make money, and does the strategy beat simply
+holding? It blocks on the answers, and it will not congratulate you — passing only
+means the risk is informed, never that you will profit.
+
 Live trading is off by default and takes four independent steps to arm. This is
 deliberate — each one is a place to stop and reconsider.
 
@@ -347,6 +362,10 @@ deliberate — each one is a place to stop and reconsider.
 
 Plus `max_order_notional`, a hard client-side cap on any single order, enforced in
 the broker so nothing can route around it. Start at £10.
+
+A fifth requirement that is not a flag: **run it somewhere that stays up.** If the
+machine stops, the bot stops — holding a position it can no longer manage or exit. A
+laptop that sleeps and an ephemeral cloud session both fail this.
 
 ```bash
 export CRYPTOCOM_API_KEY=...
