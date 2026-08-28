@@ -379,3 +379,57 @@ class TestSpanPhrasing(unittest.TestCase):
         self.assertIn("5.0 hours", _too_short(5 * hour))
         self.assertIn("1.0 day -", _too_short(day))
         self.assertIn("2.1 days", _too_short(2.1 * day))
+
+
+class TestDrawdownIsActuallyMeasured(unittest.TestCase):
+    """Max drawdown reports a real number on a series that really fell.
+
+    This was the one thing nothing checked. Every other headline figure had a test
+    that failed when it was broken; max drawdown could be hard-wired to zero and the
+    whole suite stayed green. It matters more than most: reducing drawdown is the only
+    effect in this repository that survived walk-forward validation, so a broken
+    measurement would make the project's single robust finding unverifiable.
+    """
+
+    def curve(self, equities):
+        from tradebot.metrics import _max_drawdown
+        from tradebot.types import EquityPoint
+
+        return _max_drawdown([
+            EquityPoint(ts=i * 60_000, equity=e, price=e, position=0.0, cash=e)
+            for i, e in enumerate(map(float, equities))
+        ])
+
+    def test_a_halving_is_reported_as_fifty_percent(self):
+        self.assertAlmostEqual(self.curve([100, 50, 100]), 50.0)
+
+    def test_it_measures_from_the_peak_not_the_start(self):
+        """Rising to 200 then falling to 100 is a 50% drawdown, not a flat year."""
+        self.assertAlmostEqual(self.curve([100, 200, 100]), 50.0)
+
+    def test_it_keeps_the_worst_fall_not_the_last(self):
+        self.assertAlmostEqual(self.curve([100, 40, 100, 90]), 60.0)
+
+    def test_a_curve_that_only_rises_has_no_drawdown(self):
+        self.assertAlmostEqual(self.curve([100, 110, 120]), 0.0)
+
+    def test_a_real_backtest_through_a_crash_reports_a_real_number(self):
+        from tradebot.strategies import build
+        from tradebot.types import Candle
+
+        prices = [100.0] * 20 + [40.0] * 20
+        candles = [
+            Candle(ts=1_700_000_000_000 + i * 86_400_000, open=p, high=p * 1.01,
+                   low=p * 0.99, close=p, volume=1.0)
+            for i, p in enumerate(prices)
+        ]
+        metrics = run_backtest(
+            candles, build("buy_and_hold"), starting_cash=1000.0,
+            limits=RiskLimits(max_position_pct=1.0, max_daily_loss_pct=0.99,
+                              max_drawdown_pct=0.99, max_trades_per_day=1000,
+                              min_trade_notional=1.0, cooldown_bars_after_loss=0),
+            execution=ExecutionSettings(min_notional=1.0),
+        ).metrics
+        self.assertGreater(metrics.max_drawdown_pct, 50.0,
+                           "holding through a 60% fall must report a large drawdown")
+        self.assertIn("Max drawdown", metrics.render())
