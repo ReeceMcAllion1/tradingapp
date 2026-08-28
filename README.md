@@ -426,7 +426,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Six strategies: a benchmark, two that fail instructively, and one that insures |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 236, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 265, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
 every strategy's end-to-end result to the penny, so a change to fill pricing or bracket
@@ -435,6 +435,11 @@ logic cannot silently move every number in this file while the unit tests stay g
 account, a flat fee on a £200 balance — against every registered strategy, asserting
 invariants no strategy may break. It found a real one: the engine sized positions from
 equity and then charged the fee, spending money the account did not have.
+`tests/test_broker_signing.py` pins the live request byte for byte, because a signature
+is the one thing here that cannot be checked by running it — a wrong one comes back as
+a 401 indistinguishable from an expired key. It proves the implementation matches the
+venue's published algorithm; it does not prove the algorithm is current, and none of it
+has been checked against a funded account.
 
 ---
 

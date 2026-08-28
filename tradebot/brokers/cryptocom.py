@@ -26,6 +26,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import time
 import urllib.error
@@ -40,13 +41,48 @@ BASE_URL = "https://api.crypto.com/exchange/v1"
 log = logging.getLogger("tradebot.broker")
 
 
+def floor_to_decimals(qty: float, decimals: int) -> float:
+    """Round a quantity down to the venue's precision, never up.
+
+    ``round()`` goes to nearest, which means it can round *up* - and every use of this
+    number is a ceiling of some kind. Rounding a size up overshoots what the strategy
+    asked for; rounding the ``max_order_notional`` trim up overshoots the cap that
+    exists to contain a sizing bug. A limit that can be exceeded by rounding is not a
+    limit. On a coarse lot size the gap is not academic: trimming to a whole unit at
+    £30 a unit turns a £50 cap into a £60 order.
+    """
+    if decimals < 0:
+        raise ValueError("decimals must not be negative")
+    factor = 10**decimals
+    return math.floor(abs(qty) * factor) / factor
+
+
 def params_to_str(obj: object, level: int = 0, max_level: int = 3) -> str:
     """Crypto.com's canonical parameter serialisation for request signing.
 
     Keys are sorted, nested objects are flattened, and booleans lower-cased. The
     signature will not match if any of that differs, so this mirrors the published
     reference implementation exactly.
+
+    Floats are refused outright. Both sides of the signature have to serialise every
+    value identically, and a float is the one type where they reliably disagree:
+    Python renders 0.00001 as ``1e-05`` while the exchange, parsing the JSON number
+    and re-serialising it to verify, writes ``0.00001``. The signature then fails to
+    match, and it does so *only* for small or awkward quantities - so it passes every
+    test with round numbers and rejects the real order. The venue's own documentation
+    says to send numbers as strings for exactly this reason.
+
+    Refusing here turns that into a loud local failure at the call site rather than an
+    opaque 401 from the exchange at the worst possible moment. It is raised as a plain
+    ValueError; the broker converts it into a BrokerError, which the engine already
+    treats as a rejection and halts on after a few in a row.
     """
+    if isinstance(obj, float):
+        raise ValueError(
+            f"cannot sign the float {obj!r}: Crypto.com requires numbers as strings, "
+            f'because "1e-05" and "0.00001" hash differently. Format it yourself, '
+            f'e.g. f"{{value:.8f}}".'
+        )
     if level >= max_level or not isinstance(obj, dict):
         return str(obj)
     out = ""
@@ -57,6 +93,12 @@ def params_to_str(obj: object, level: int = 0, max_level: int = 3) -> str:
             out += "null"
         elif isinstance(value, bool):
             out += str(value).lower()
+        elif isinstance(value, float):
+            raise ValueError(
+                f"cannot sign the float {value!r} under key {key!r}: Crypto.com requires "
+                f'numbers as strings, because "1e-05" and "0.00001" hash differently. '
+                f'Format it yourself, e.g. f"{{value:.8f}}".'
+            )
         elif isinstance(value, list):
             for item in value:
                 out += params_to_str(item, level + 1, max_level)
@@ -108,7 +150,11 @@ class CryptoComBroker(Broker):
             "params": params,
             "nonce": nonce,
         }
-        signature_base = f"{method}{self._request_id}{self.api_key}{params_to_str(params)}{nonce}"
+        try:
+            encoded_params = params_to_str(params)
+        except ValueError as exc:
+            raise BrokerError(f"{method} cannot be signed: {exc}") from exc
+        signature_base = f"{method}{self._request_id}{self.api_key}{encoded_params}{nonce}"
         payload["sig"] = hmac.new(
             self.api_secret.encode("utf-8"),
             signature_base.encode("utf-8"),
@@ -165,7 +211,7 @@ class CryptoComBroker(Broker):
             return None
 
         side = Side.BUY if signed_qty > 0 else Side.SELL
-        qty = round(abs(signed_qty), self.qty_decimals)
+        qty = floor_to_decimals(abs(signed_qty), self.qty_decimals)
         if qty <= 0:
             log.info("order of %.10f rounds to zero at %d dp, skipping", signed_qty, self.qty_decimals)
             return None
@@ -177,7 +223,7 @@ class CryptoComBroker(Broker):
                 "order notional %.2f exceeds max_order_notional %.2f - trimming %.8f to %.8f",
                 notional, self.max_order_notional, qty, capped,
             )
-            qty = round(capped, self.qty_decimals)
+            qty = floor_to_decimals(capped, self.qty_decimals)
             if qty <= 0:
                 return None
 
