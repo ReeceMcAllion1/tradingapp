@@ -158,7 +158,7 @@ def run(
 # ---------------------------------------------------------------------- reporting
 
 
-def render(study: Study, currency: str = "$", starting_cash: float = 10_000.0) -> str:
+def render(study: Study, currency: str = "$") -> str:
     """A table per symbol, then an aggregate, then the verdict."""
     out: list[str] = []
 

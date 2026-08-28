@@ -18,7 +18,22 @@ from .costs import CostModel
 from .portfolio import Portfolio
 
 
-def _day_of(ts_ms: int) -> str:
+MS_PER_DAY = 86_400_000
+
+
+def _day_index(ts_ms: int) -> int:
+    """Whole UTC days since the epoch.
+
+    Integer division rather than formatting a date string. This is compared once per
+    bar, and on a 20,000-bar backtest the strftime version was about a third of the
+    entire run - a lot of work to answer "is it still the same day". The two change
+    over at exactly the same instants, so nothing about the behaviour differs.
+    """
+    return ts_ms // MS_PER_DAY
+
+
+def _day_label(ts_ms: int) -> str:
+    """Human-readable date, for the handful of risk events that get logged."""
     return datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
@@ -67,7 +82,7 @@ class RiskManager:
     costs: CostModel
 
     peak_equity: float = 0.0
-    day: str = ""
+    day: int = -1
     day_start_equity: float = 0.0
     trades_today: int = 0
     cooldown_left: int = 0
@@ -87,7 +102,7 @@ class RiskManager:
     def observe(self, ts: int, portfolio: Portfolio, price: float) -> None:
         """Update daily and drawdown bookkeeping. Call once per bar, before ``evaluate``."""
         equity = portfolio.equity(price)
-        today = _day_of(ts)
+        today = _day_index(ts)
 
         if today != self.day:
             self.day = today
@@ -95,7 +110,7 @@ class RiskManager:
             self.trades_today = 0
             if self.halted_reason == "daily loss limit":
                 self.halted_reason = None
-                self._log(f"{today}: new day, daily loss halt lifted")
+                self._log(f"{_day_label(ts)}: new day, daily loss halt lifted")
 
         self.peak_equity = max(self.peak_equity, equity)
 
@@ -104,7 +119,7 @@ class RiskManager:
             if drawdown >= self.limits.max_drawdown_pct:
                 self.halted_reason = "max drawdown"
                 self._log(
-                    f"{today}: KILL SWITCH - drawdown {drawdown:.1%} hit the "
+                    f"{_day_label(ts)}: KILL SWITCH - drawdown {drawdown:.1%} hit the "
                     f"{self.limits.max_drawdown_pct:.1%} limit; trading stopped"
                 )
 
@@ -112,7 +127,9 @@ class RiskManager:
             day_loss = 1.0 - equity / self.day_start_equity
             if day_loss >= self.limits.max_daily_loss_pct:
                 self.halted_reason = "daily loss limit"
-                self._log(f"{today}: down {day_loss:.1%} today; trading paused until tomorrow")
+                self._log(
+                    f"{_day_label(ts)}: down {day_loss:.1%} today; trading paused until tomorrow"
+                )
 
         if self.cooldown_left > 0:
             self.cooldown_left -= 1
@@ -187,7 +204,15 @@ class RiskManager:
 
     def restore(self, state: dict) -> None:
         self.peak_equity = float(state.get("peak_equity", 0.0))
-        self.day = str(state.get("day", ""))
+        # State files written before the day counter became an integer hold a
+        # "YYYY-MM-DD" string. A running bot must not die on restart over a
+        # bookkeeping detail, so an unparseable value simply starts a fresh day - the
+        # only cost is that the day's trade count and loss limit reset once.
+        raw_day = state.get("day", -1)
+        try:
+            self.day = int(raw_day)
+        except (TypeError, ValueError):
+            self.day = -1
         self.day_start_equity = float(state.get("day_start_equity", 0.0))
         self.trades_today = int(state.get("trades_today", 0))
         self.cooldown_left = int(state.get("cooldown_left", 0))

@@ -257,7 +257,7 @@ def cmd_study(args) -> int:
     if not result.rows:
         raise SystemExit("no data could be loaded for any symbol")
 
-    print(study_mod.render(result, currency="$", starting_cash=args.cash))
+    print(study_mod.render(result, currency="$"))
 
     if result.failures:
         print("  Symbols that failed to load:")

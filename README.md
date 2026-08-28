@@ -428,6 +428,9 @@ python3 -m tradebot init-config    write a starter config.toml
 
 Run the tests with `python3 -m unittest discover -s tests -t .` — there are 202, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
+`tests/test_golden.py` additionally pins every strategy's end-to-end result to the
+penny, so a change to fill pricing or bracket logic cannot silently move every
+number in this file while the unit tests stay green.
 
 ---
 

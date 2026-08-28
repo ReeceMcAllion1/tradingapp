@@ -149,5 +149,26 @@ class TestValidation(unittest.TestCase):
                 RiskLimits(**bad)
 
 
+
+
+class TestStateCompatibility(unittest.TestCase):
+    """A running bot must survive a restart across a code change."""
+
+    def test_a_pre_integer_day_string_does_not_crash_restore(self):
+        risk = manager()
+        risk.restore({"day": "2026-08-28", "peak_equity": 500.0})
+        self.assertEqual(risk.day, -1, "unparseable day starts fresh rather than raising")
+        self.assertAlmostEqual(risk.peak_equity, 500.0, msg="the rest of the state survives")
+
+    def test_an_integer_day_restores_exactly(self):
+        risk = manager()
+        risk.restore({"day": 20693})
+        self.assertEqual(risk.day, 20693)
+
+    def test_a_missing_day_starts_fresh(self):
+        risk = manager()
+        risk.restore({})
+        self.assertEqual(risk.day, -1)
+
 if __name__ == "__main__":
     unittest.main()
