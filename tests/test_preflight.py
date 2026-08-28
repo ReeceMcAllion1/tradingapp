@@ -139,3 +139,29 @@ class TestPreflight(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCostDragCheck(unittest.TestCase):
+    """Costs above a fifth of capital a year are fatal regardless of the signal."""
+
+    def setUp(self):
+        self.config = Config()
+        self.config.live.trades_file = str(Path(tempfile.mkdtemp()) / "trades.csv")
+
+    def _named(self, checks, name):
+        return next(c for c in checks if c.name == name)
+
+    def test_ruinous_cost_drag_blocks(self):
+        checks = preflight.run(self.config, annual_cost_drag_pct=104.1)
+        check = self._named(checks, "Cost drag")
+        self.assertFalse(check.passed)
+        self.assertTrue(check.blocking)
+        self.assertIn("104.1%", check.detail)
+
+    def test_modest_cost_drag_passes(self):
+        checks = preflight.run(self.config, annual_cost_drag_pct=3.0)
+        self.assertTrue(self._named(checks, "Cost drag").passed)
+
+    def test_the_check_is_absent_when_not_measured(self):
+        checks = preflight.run(self.config)
+        self.assertFalse(any(c.name == "Cost drag" for c in checks))

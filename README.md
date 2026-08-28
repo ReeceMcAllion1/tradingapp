@@ -192,6 +192,49 @@ python3 -m tradebot study --years 10 --strategies never_lose
 python3 -m tradebot study --years 10 --symbols FRCB,PTON,LUMN,BA,INTC --strategies never_lose,ema_cross
 ```
 
+## Intraday crypto: 24 more runs, same answer
+
+The stock study used daily bars. Intraday is where people actually expect a bot to
+earn its keep, so I ran the same engine over real Crypto.com data at Crypto.com's own
+base taker fee (7.5bp), on BTC, ETH and SOL:
+
+**Hourly bars, 20,000 each — 833 days, 2.3 years per instrument:**
+
+| strategy | final | total | trades | costs | **cost/yr** | vs buy-and-hold |
+|---|---|---|---|---|---|---|
+| buy_and_hold | $882 | −11.8% | 3 | $2 | **0.1%** | — |
+| never_lose | $685 | −31.5% | 323 | $266 | 11.6% | −19.7pp |
+| ema_cross | $320 | −68.0% | 1,529 | $656 | 28.7% | −56.3pp |
+| mean_reversion | $267 | −73.3% | 1,323 | $551 | 24.1% | −61.6pp |
+| micro_scalp | $10 | −99.0% | 5,218 | $815 | 35.7% | −87.2pp |
+
+**15-minute bars, 208 days per instrument** — same ordering, worse drag: `ema_cross`
+burned **104% of capital per year in costs**, `micro_scalp` 148%.
+
+**0 of 24 runs beat buying and holding.** Across everything now tested — 10 US stocks
+over a decade plus 6 crypto series intraday — **2 of 54 runs beat holding**, and both
+were isolated pairings of the kind chance produces on its own.
+
+Note the benchmark was *losing* over this crypto window (−11.8%). The active
+strategies did not lose because the market fell; they lost three to six times more
+than the market did, and the `cost/yr` column is why.
+
+### The one number that decides it
+
+`cost/yr` — costs as a percentage of your capital, annualised — is now reported by
+every backtest and blocks in `preflight` above 20%. It is more useful than returns
+because returns are noisy and market-dependent while this is not: it is what the venue
+takes whether you are right or wrong.
+
+Holding pays 0.1% a year. A 15-minute strategy paid 104%. **No entry signal is good
+enough to outrun that**, which is why the fix is always fewer trades or bigger targets,
+never a cleverer indicator.
+
+```bash
+python3 -m tradebot fetch --bars 20000        # then study any local bar files:
+python3 -m tradebot study --files "data/*_1h.csv" --fee-bps 7.5 --cash 1000
+```
+
 ## Seeing the trades
 
 Every number above can be checked, trade by trade:
@@ -236,7 +279,7 @@ tail -f state/trades.csv
 
 ```
 python3 -m tradebot demo           the cost arithmetic, run on real data
-python3 -m tradebot study          10 years of stocks, every strategy vs buy-and-hold
+python3 -m tradebot study          stocks or local bar files, every strategy vs buy-and-hold
 python3 -m tradebot trades         every trade a strategy made, with a CSV export
 python3 -m tradebot strategies     list available strategies
 python3 -m tradebot fetch          download history to CSV
@@ -263,7 +306,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Five strategies, including buy-and-hold and two that fail instructively |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 162, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 172, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---

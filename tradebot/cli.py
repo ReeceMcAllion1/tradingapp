@@ -225,8 +225,18 @@ def cmd_study(args) -> int:
         print(f"  Drawdown kill switch: {args.kill_switch:.0%}")
     print("\n  Loading data...")
 
+    series = None
+    if args.files:
+        from glob import glob
+        paths = sorted(set(sum((glob(pattern) for pattern in args.files), [])))
+        if not paths:
+            raise SystemExit(f"no files matched: {' '.join(args.files)}")
+        series = study_mod.load_files(paths)
+        symbols = list(series)
+
     result = study_mod.run(
         symbols=symbols,
+        series=series,
         strategy_names=names,
         years=args.years,
         starting_cash=args.cash,
@@ -381,6 +391,7 @@ def cmd_preflight(args) -> int:
     """Report honestly whether this setup is ready to risk real money."""
     config = config_mod.load(args.config)
     verdict = None
+    drag = None
 
     if not args.skip_backtest:
         try:
@@ -396,6 +407,7 @@ def cmd_preflight(args) -> int:
             )
             active = backtest_mod.run(strategy=strategy, **common).metrics
             passive = backtest_mod.run(strategy=build("buy_and_hold"), **common).metrics
+            drag = active.cost_drag_annual_pct
             gap = active.total_return_pct - passive.total_return_pct
             verdict = (
                 gap > 0,
@@ -410,7 +422,7 @@ def cmd_preflight(args) -> int:
         except Exception as exc:  # noqa: BLE001 - a failed check must not hide the rest
             print(f"  (could not run the benchmark backtest: {exc})", file=sys.stderr)
 
-    checks = preflight_mod.run(config, backtest_verdict=verdict)
+    checks = preflight_mod.run(config, backtest_verdict=verdict, annual_cost_drag_pct=drag)
     print(preflight_mod.render(checks))
     return 1 if any(not c.passed and c.blocking for c in checks) else 0
 
@@ -518,6 +530,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("study", help="backtest strategies over years of stock data vs buy-and-hold")
     p.add_argument("--symbols", default=DEFAULT_STUDY_SYMBOLS, help="comma-separated tickers")
+    p.add_argument("--files", nargs="+", metavar="CSV",
+                   help="study local bar files instead of downloading (globs allowed)")
     p.add_argument(
         "--strategies", default="ema_cross,mean_reversion,micro_scalp",
         help="comma-separated strategy names (buy_and_hold is always added)",

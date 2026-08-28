@@ -32,6 +32,13 @@ MIN_PAPER_TRADES = 20
 #: reason to risk money today.
 MAX_RECORD_AGE_DAYS = 7
 
+#: Costs above this share of capital per year are fatal on their own. Measured over
+#: 2.3 years of hourly crypto and 208 days of 15-minute crypto, the active strategies
+#: in this package ran at 24-148% a year against a buy-and-hold benchmark paying 0.1%.
+#: None of them beat holding, in 24 runs out of 24. There is no entry signal good
+#: enough to outrun a number like that.
+MAX_ANNUAL_COST_DRAG_PCT = 20.0
+
 
 @dataclass
 class Check:
@@ -85,9 +92,25 @@ def credentials_present() -> bool:
     return bool(os.environ.get("CRYPTOCOM_API_KEY") and os.environ.get("CRYPTOCOM_API_SECRET"))
 
 
-def run(config: Config, backtest_verdict: tuple[bool, str] | None = None) -> list[Check]:
+def run(
+    config: Config,
+    backtest_verdict: tuple[bool, str] | None = None,
+    annual_cost_drag_pct: float | None = None,
+) -> list[Check]:
     """Every readiness check, in the order they matter."""
     checks: list[Check] = []
+
+    if annual_cost_drag_pct is not None:
+        ok = annual_cost_drag_pct <= MAX_ANNUAL_COST_DRAG_PCT
+        checks.append(Check(
+            "Cost drag",
+            ok,
+            f"costs run at {annual_cost_drag_pct:.1f}% of capital per year"
+            + ("" if ok else
+               f", against a {MAX_ANNUAL_COST_DRAG_PCT:.0f}% limit. Holding the same asset "
+               "pays about 0.1%. No entry signal is good enough to outrun this - "
+               "trade less often or target bigger moves."),
+        ))
 
     rows = _read_paper_trades(config.live.trades_file)
     days = _span_days(rows)

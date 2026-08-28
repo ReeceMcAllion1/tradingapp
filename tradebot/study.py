@@ -82,6 +82,20 @@ def load_symbol(
     return candles
 
 
+def load_files(paths: list[str | Path]) -> dict[str, list[Candle]]:
+    """Load bar series from local CSV files, keyed by filename.
+
+    Lets a study run over anything you already have - intraday crypto, a broker
+    export, a market with no Yahoo ticker - rather than only what one vendor serves.
+    The comparison logic does not care where the bars came from.
+    """
+    series: dict[str, list[Candle]] = {}
+    for path in paths:
+        target = Path(path)
+        series[target.stem.upper()] = CsvFeed(target).load()
+    return series
+
+
 def run(
     symbols: list[str],
     strategy_names: list[str],
@@ -93,8 +107,13 @@ def run(
     cache_dir: str | Path = "data",
     refresh: bool = False,
     progress=None,
+    series: dict[str, list[Candle]] | None = None,
 ) -> Study:
-    """Backtest each strategy on each symbol. The benchmark is always included."""
+    """Backtest each strategy on each symbol. The benchmark is always included.
+
+    ``series`` supplies bars directly, bypassing the download entirely - used when
+    the study runs over local files.
+    """
     costs = costs or CostModel()
     limits = limits or RiskLimits()
     execution = execution or ExecutionSettings()
@@ -104,10 +123,13 @@ def run(
         names.insert(0, BENCHMARK)
 
     study = Study()
-    for symbol in symbols:
+    for symbol in (list(series) if series is not None else symbols):
         try:
-            candles = load_symbol(symbol, years=years, cache_dir=cache_dir, refresh=refresh)
-        except (YahooError, ValueError, OSError) as exc:
+            if series is not None:
+                candles = series[symbol]
+            else:
+                candles = load_symbol(symbol, years=years, cache_dir=cache_dir, refresh=refresh)
+        except (YahooError, ValueError, OSError, KeyError) as exc:
             study.failures[symbol] = str(exc)
             if progress:
                 progress(f"  {symbol}: SKIPPED - {exc}")
@@ -142,7 +164,7 @@ def render(study: Study, currency: str = "$", starting_cash: float = 10_000.0) -
 
     header = (
         f"  {'strategy':<16} {'final':>12} {'total':>9} {'CAGR':>8} "
-        f"{'maxDD':>8} {'Sharpe':>7} {'trades':>7} {'costs':>10}  vs hold"
+        f"{'maxDD':>8} {'Sharpe':>7} {'trades':>7} {'costs':>10} {'cost/yr':>8}  vs hold"
     )
 
     for symbol in study.symbols():
@@ -165,7 +187,7 @@ def render(study: Study, currency: str = "$", starting_cash: float = 10_000.0) -
                 f"  {row.strategy:<16} {currency}{m.ending_equity:>11,.0f} "
                 f"{m.total_return_pct:>8.1f}% {m.cagr_pct:>7.2f}% "
                 f"{m.max_drawdown_pct:>7.1f}% {m.sharpe:>7.2f} {m.trades:>7,} "
-                f"{currency}{m.total_costs:>9,.0f}{verdict}{halted}"
+                f"{currency}{m.total_costs:>9,.0f} {m.cost_drag_annual_pct:>7.1f}%{verdict}{halted}"
             )
 
     out.append("")
@@ -185,6 +207,7 @@ def render(study: Study, currency: str = "$", starting_cash: float = 10_000.0) -
         avg_sharpe = sum(r.metrics.sharpe for r in rows) / count
         total_trades = sum(r.metrics.trades for r in rows)
         avg_costs = sum(r.metrics.total_costs for r in rows) / count
+        avg_drag = sum(r.metrics.cost_drag_annual_pct for r in rows) / count
 
         if name == BENCHMARK:
             verdict = "  (benchmark)"
@@ -199,7 +222,7 @@ def render(study: Study, currency: str = "$", starting_cash: float = 10_000.0) -
         out.append(
             f"  {name:<16} {currency}{avg_final:>11,.0f} {avg_total:>8.1f}% "
             f"{avg_cagr:>7.2f}% {avg_dd:>7.1f}% {avg_sharpe:>7.2f} "
-            f"{total_trades:>7,} {currency}{avg_costs:>9,.0f}{verdict}"
+            f"{total_trades:>7,} {currency}{avg_costs:>9,.0f} {avg_drag:>7.1f}%{verdict}"
         )
 
     out.append("")

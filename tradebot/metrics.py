@@ -53,6 +53,25 @@ class Metrics:
         return self.slippage_paid + self.fees_paid
 
     @property
+    def cost_drag_pct(self) -> float:
+        """Total costs as a percentage of the money you started with.
+
+        The single most useful number for judging whether a strategy trades too much.
+        Returns are noisy and depend on the market; this does not. It is what the
+        venue took, and you pay it whether you are right or wrong.
+        """
+        if self.starting_equity <= 0:
+            return 0.0
+        return self.total_costs / self.starting_equity * 100.0
+
+    @property
+    def cost_drag_annual_pct(self) -> float:
+        """Cost drag scaled to a year, so runs of different lengths compare."""
+        if self.years < 0.05:
+            return 0.0
+        return self.cost_drag_pct / self.years
+
+    @property
     def cost_share_of_gross(self) -> float:
         """Costs as a multiple of gross profit. Above 1.0 means they ate all of it."""
         if abs(self.gross_pnl) < 1e-12:
@@ -73,6 +92,9 @@ class Metrics:
             f"  Spread + slippage   {-self.slippage_paid:>14,.2f}",
             f"  Commission          {-self.fees_paid:>14,.2f}",
             f"  Net P&L             {self.net_pnl:>14,.2f}   what you actually keep",
+            "",
+            f"  Cost drag           {self.cost_drag_pct:>13.2f}%   of starting capital"
+            + (f", {self.cost_drag_annual_pct:.1f}%/year" if self.years >= 0.05 else ""),
             "",
             f"  Trades              {self.trades:>14,}",
             f"  Win rate, on price  {self.gross_win_rate * 100:>13.1f}%   before costs",
@@ -96,7 +118,15 @@ class Metrics:
         if self.halted_reason:
             lines.append(f"  Halted              {self.halted_reason:>14}")
 
-        if self.trades and self.gross_win_rate - self.win_rate > 0.2:
+        if self.cost_drag_annual_pct >= 25.0:
+            lines += [
+                "",
+                f"  >> Costs alone are running at {self.cost_drag_annual_pct:.0f}% of your capital per year.",
+                "     No edge survives that. This strategy trades far too often for what",
+                "     it is paying - the fix is fewer trades or bigger targets, not a",
+                "     better entry signal.",
+            ]
+        elif self.trades and self.gross_win_rate - self.win_rate > 0.2:
             lines += [
                 "",
                 f"  >> {self.gross_win_rate:.0%} of these trades correctly predicted the direction, but only",
