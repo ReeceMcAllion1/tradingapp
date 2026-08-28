@@ -58,9 +58,13 @@ case "${1:-start}" in
         echo "  $name already running (pid $(cat "$RUN_DIR/${name}.pid"))"
         continue
       fi
-      supervise "$cfg" &
+      # Detach completely. A backgrounded child that inherits stdout holds the
+      # parent's pipe open, so `paper-run.sh start | tail` would hang forever waiting
+      # on processes designed never to exit.
+      supervise "$cfg" </dev/null >/dev/null 2>&1 &
       echo $! > "$RUN_DIR/${name}.pid"
       echo "  started $name (pid $!)"
+      disown 2>/dev/null || true
     done < <(configs)
     echo
     echo "  Running. Check in with:  ./scripts/paper-run.sh status"
@@ -69,12 +73,18 @@ case "${1:-start}" in
   stop)
     while read -r cfg; do
       name="$(basename "$cfg" .toml)"
+      # Order matters. Drop the stop flag first so the supervisor will not restart,
+      # then signal the worker by its exact config so a grandchild cannot outlive its
+      # supervisor, then retire the supervisor itself.
       touch "$RUN_DIR/${name}.stop"
+      pkill -TERM -f -- "-m tradebot --config $cfg paper" 2>/dev/null || true
       if [ -f "$RUN_DIR/${name}.pid" ]; then
-        pkill -TERM -P "$(cat "$RUN_DIR/${name}.pid")" 2>/dev/null || true
         kill -TERM "$(cat "$RUN_DIR/${name}.pid")" 2>/dev/null || true
         rm -f "$RUN_DIR/${name}.pid"
       fi
+      # Give it a moment to save state, then insist.
+      sleep 1
+      pkill -KILL -f -- "-m tradebot --config $cfg paper" 2>/dev/null || true
       echo "  stopped $name"
     done < <(configs)
     ;;
