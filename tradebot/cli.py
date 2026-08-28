@@ -7,7 +7,9 @@
     python -m tradebot study            10 years of stocks vs buy-and-hold
     python -m tradebot trades           show every trade a strategy made
     python -m tradebot sweep            how much of a result is real vs cherry-picked
+    python -m tradebot walkforward      would the choice have worked on unseen data?
     python -m tradebot paper            run automated, live data, simulated money
+    python -m tradebot status           check on a run without stopping it
     python -m tradebot preflight        are you actually ready for real money?
     python -m tradebot verify-keys      read-only check that API keys work
     python -m tradebot live             run automated with real money (heavily gated)
@@ -25,6 +27,7 @@ from . import config as config_mod
 from . import preflight as preflight_mod
 from . import study as study_mod
 from . import sweep as sweep_mod
+from . import walkforward as walkforward_mod
 from . import tradelog
 from .brokers import CryptoComBroker, PaperBroker
 from .costs import CostModel
@@ -316,15 +319,17 @@ def cmd_trades(args) -> int:
 
 def cmd_sweep(args) -> int:
     """Run a strategy across a parameter grid and show the whole distribution."""
-    from glob import glob
+    result = sweep_mod.run(
+        series=_series_from(args.files), strategy=args.strategy,
+        grid=_grid_from(args.param), **_sweep_context(args),
+    )
+    print(sweep_mod.render(result))
+    return 0
 
-    paths = sorted(set(sum((glob(p) for p in args.files), [])))
-    if not paths:
-        raise SystemExit(f"no files matched: {' '.join(args.files)}")
-    series = study_mod.load_files(paths)
 
+def _grid_from(specs: list[str]) -> dict[str, list]:
     grid: dict[str, list] = {}
-    for spec in args.param:
+    for spec in specs:
         if "=" not in spec:
             raise SystemExit(f"bad --param {spec!r}; expected name=v1,v2,v3")
         name, raw = spec.split("=", 1)
@@ -335,21 +340,40 @@ def cmd_sweep(args) -> int:
         grid[name.strip()] = values
     if not grid:
         raise SystemExit("give at least one --param name=v1,v2,v3")
+    return grid
 
-    costs = CostModel(
-        taker_fee_bps=args.fee_bps, maker_fee_bps=args.fee_bps,
-        half_spread_bps=args.spread_bps, slippage_bps=args.slippage_bps,
-    )
-    result = sweep_mod.run(
-        series=series, strategy=args.strategy, grid=grid, starting_cash=args.cash,
-        costs=costs,
+
+def _series_from(patterns: list[str]) -> dict:
+    from glob import glob
+
+    paths = sorted(set(sum((glob(p) for p in patterns), [])))
+    if not paths:
+        raise SystemExit(f"no files matched: {' '.join(patterns)}")
+    return study_mod.load_files(paths)
+
+
+def _sweep_context(args):
+    return dict(
+        starting_cash=args.cash,
+        costs=CostModel(
+            taker_fee_bps=args.fee_bps, maker_fee_bps=args.fee_bps,
+            half_spread_bps=args.spread_bps, slippage_bps=args.slippage_bps,
+        ),
         limits=RiskLimits(
             max_position_pct=1.0, max_daily_loss_pct=0.99, max_drawdown_pct=0.99,
             max_trades_per_day=10_000, min_trade_notional=1.0, cooldown_bars_after_loss=0,
         ),
         execution=ExecutionSettings(min_notional=1.0),
     )
-    print(sweep_mod.render(result))
+
+
+def cmd_walkforward(args) -> int:
+    """Pick parameters on past data, measure them on data the choice never saw."""
+    result = walkforward_mod.run(
+        series=_series_from(args.files), strategy=args.strategy,
+        grid=_grid_from(args.param), folds=args.folds, **_sweep_context(args),
+    )
+    print(walkforward_mod.render(result))
     return 0
 
 
@@ -466,6 +490,73 @@ def cmd_preflight(args) -> int:
     checks = preflight_mod.run(config, backtest_verdict=verdict, annual_cost_drag_pct=drag)
     print(preflight_mod.render(checks))
     return 1 if any(not c.passed and c.blocking for c in checks) else 0
+
+
+def cmd_status(args) -> int:
+    """Report what a running (or stopped) session is doing, without disturbing it.
+
+    Reads only the files the runner writes, so it is safe to call at any time against
+    a live bot. Recommending a month of paper trading is hollow without a way to look
+    in on it.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    config = config_mod.load(args.config)
+    state_path = Path(config.live.state_file)
+    if not state_path.exists():
+        raise SystemExit(f"no session state at {state_path}. Has this config ever run?")
+
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"could not read {state_path}: {exc}") from exc
+
+    engine = payload.get("engine", {})
+    book = engine.get("portfolio", {})
+    risk = engine.get("risk", {})
+    saved = payload.get("saved_at", 0)
+    age = (datetime.now(tz=timezone.utc) - datetime.fromtimestamp(saved / 1000, tz=timezone.utc))
+    money = config.account.symbol
+
+    qty = float(book.get("qty", 0.0))
+    cash = float(book.get("cash", 0.0))
+    started = config.account.starting_cash
+
+    print(f"\n  {payload.get('strategy', '?')} on {payload.get('symbol', '?')} "
+          f"{payload.get('interval', '')}")
+    print("  " + "-" * 52)
+    print(f"  last update       {age.total_seconds() / 60:>10,.0f} min ago"
+          + ("   <-- stale, is it still running?" if age.total_seconds() > 3600 else ""))
+    print(f"  bars processed    {engine.get('bars_seen', 0):>10,}")
+    print(f"  position          {qty:>10.8f}")
+    print(f"  cash              {money}{cash:>9,.2f}")
+    if qty:
+        print(f"  average price     {float(book.get('avg_price', 0.0)):>10,.2f}")
+    print(f"  costs paid        {money}{float(book.get('fees_paid', 0.0)) + float(book.get('slippage_paid', 0.0)):>9,.2f}"
+          f"   of {money}{started:,.2f} started with")
+
+    if risk.get("halted_reason"):
+        print(f"\n  HALTED: {risk['halted_reason']}")
+    if engine.get("consecutive_rejections"):
+        print(f"  order rejections in a row: {engine['consecutive_rejections']}")
+
+    trades_path = Path(config.live.trades_file) if config.live.trades_file else None
+    if trades_path and trades_path.exists():
+        import csv as csvmod
+
+        with trades_path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csvmod.DictReader(handle))
+        if rows:
+            net = sum(float(r.get("net", 0) or 0) for r in rows)
+            wins = sum(1 for r in rows if float(r.get("net", 0) or 0) > 0)
+            print(f"\n  {len(rows)} closed trades, {wins} winners "
+                  f"({wins / len(rows) * 100:.0f}%), net {money}{net:+,.2f}")
+            print(f"  full log: {trades_path}")
+            for row in rows[-args.recent:]:
+                print(f"    {row['closed']}  {row['side']:<4} net {float(row['net']):>+8.2f}  {row['reason'][:40]}")
+    print()
+    return 0
 
 
 def cmd_verify_keys(args) -> int:
@@ -623,6 +714,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--slippage-bps", type=float, default=2.0)
     p.set_defaults(func=cmd_sweep)
 
+    p = sub.add_parser("walkforward", help="choose parameters on past data, test on unseen data")
+    p.add_argument("-s", "--strategy", required=True)
+    p.add_argument("--files", nargs="+", required=True, metavar="CSV")
+    p.add_argument("--param", nargs="+", required=True, metavar="NAME=V1,V2")
+    p.add_argument("--folds", type=int, default=6)
+    p.add_argument("--cash", type=float, default=1000.0)
+    p.add_argument("--fee-bps", type=float, default=7.5)
+    p.add_argument("--spread-bps", type=float, default=1.0)
+    p.add_argument("--slippage-bps", type=float, default=2.0)
+    p.set_defaults(func=cmd_walkforward)
+
     p = sub.add_parser("fetch", help="download historical bars to CSV")
     p.add_argument("--bars", type=int, default=5000)
     p.add_argument("-o", "--output", default="data/history.csv")
@@ -649,6 +751,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--years", type=int, default=10)
     p.add_argument("--skip-backtest", action="store_true", help="skip the benchmark comparison")
     p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("status", help="check on a running session without stopping it")
+    p.add_argument("--recent", type=int, default=5, metavar="N", help="show the last N trades")
+    p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("verify-keys", help="read-only check that API credentials work")
     p.set_defaults(func=cmd_verify_keys)

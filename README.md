@@ -289,6 +289,56 @@ So: no, I did not find a way to make money. I found one effect that is robust
 (smaller drawdowns), one that is not (higher returns), and a tool that tells the two
 apart.
 
+## The verdict: walk-forward validation
+
+Everything above — every table, including the ones I liked — is in-sample. The
+strategies were written after seeing the data and the parameters chosen by running a
+grid over the same bars they are reported on. That describes the past with the answer
+in hand. It forecasts nothing.
+
+Walk-forward is the correction: split history into consecutive segments, pick the best
+parameters on each one, then measure that choice on the *next* segment, which the
+selection never saw. Only the out-of-sample results count.
+
+```bash
+python3 -m tradebot walkforward -s slow_trend --files "data/*_1h.csv" \
+    --param period=100,200,400,600 band_pct=0.0,0.02,0.05 --folds 6
+```
+
+**18 folds across BTC, ETH and SOL:**
+
+| | |
+|---|---|
+| in-sample, as picked | **+14.2pp** — what fitting the grid promised |
+| out-of-sample, actual | **+2.9pp** — what it delivered next |
+| lost to overfitting | **11.3pp** |
+| folds beating buy-and-hold | **10 of 18** |
+| **drawdown cut, median** | **+20.0 points** |
+
+**Eighty percent of the apparent edge evaporated.** What was left — +2.9pp mean, 10 of
+18 folds — is a coin flip, indistinguishable from zero. The return edge was never
+there; it was the grid memorising noise.
+
+**The drawdown reduction survived.** +20 points, median, out of sample, on data the
+parameter choice never saw. That is now the only claim in this repository that has
+withstood every test applied to it: multiple markets, three timeframes, twelve
+parameter settings, and finally out-of-sample validation.
+
+### So, honestly
+
+After a decade of stocks, 2.3 years of hourly crypto, 208 days of 15-minute crypto,
+54 strategy runs, a parameter sweep and a walk-forward:
+
+- **No strategy here reliably beats buying and holding.** Two of 54 in-sample runs did,
+  and the walk-forward shows why not to trust that.
+- **Cost drag is the mechanism.** 0.1%/year for holding against 24–148%/year for the
+  active strategies. No entry signal outruns that.
+- **One effect is real:** trend-following reduces drawdowns, substantially and
+  repeatably, at the price of large underperformance in rising markets. It is
+  insurance, and it should be bought or declined as insurance — not as an edge.
+
+That is a genuinely useful answer, and it is not the one anybody wants.
+
 ## Seeing the trades
 
 Every number above can be checked, trade by trade:
@@ -336,6 +386,8 @@ python3 -m tradebot demo           the cost arithmetic, run on real data
 python3 -m tradebot study          stocks or local bar files, every strategy vs buy-and-hold
 python3 -m tradebot trades         every trade a strategy made, with a CSV export
 python3 -m tradebot sweep          how much of a result is real vs cherry-picked
+python3 -m tradebot walkforward    would the choice have worked on unseen data?
+python3 -m tradebot status         check on a running session without stopping it
 python3 -m tradebot strategies     list available strategies
 python3 -m tradebot fetch          download history to CSV
 python3 -m tradebot backtest       replay a strategy over history
@@ -356,13 +408,14 @@ python3 -m tradebot init-config    write a starter config.toml
 | `study.py` | Multi-symbol, multi-year comparison against buy-and-hold |
 | `tradelog.py` | The trade log: terminal table, CSV export, live append |
 | `sweep.py` | Parameter grids, so a lucky cell cannot pass as a finding |
+| `walkforward.py` | Out-of-sample validation: the check on every other number here |
 | `preflight.py` | Readiness checks that must pass before risking real money |
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Six strategies: a benchmark, two that fail instructively, and one that insures |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 189, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 202, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---
@@ -386,7 +439,9 @@ python3 -m tradebot paper             # automated, live data, simulated money
 ```
 
 Leave the paper run going for weeks. Use `nohup`, `screen`, or a systemd unit — it
-saves state after every bar, so it survives restarts.
+saves state after every bar, so it survives restarts. Check on it any time with
+`python3 -m tradebot status`, which reads only the files the runner writes and is safe
+to call against a live bot.
 
 ### How a backtest avoids lying to you
 

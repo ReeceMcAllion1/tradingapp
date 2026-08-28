@@ -165,3 +165,68 @@ class TestCostDragCheck(unittest.TestCase):
     def test_the_check_is_absent_when_not_measured(self):
         checks = preflight.run(self.config)
         self.assertFalse(any(c.name == "Cost drag" for c in checks))
+
+
+class TestStatusReading(unittest.TestCase):
+    """status must read a live session's files safely while it is still writing them."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.config = Config()
+        self.config.live.state_file = str(self.tmp / "state.json")
+        self.config.live.trades_file = str(self.tmp / "trades.csv")
+
+    def _run_status(self, recent=5):
+        import argparse
+        import contextlib
+        import io
+
+        from tradebot import cli
+
+        cfg_path = self.tmp / "c.toml"
+        cfg_path.write_text(
+            f'[live]\nstate_file = "{self.config.live.state_file}"\n'
+            f'trades_file = "{self.config.live.trades_file}"\n',
+            encoding="utf-8",
+        )
+        args = argparse.Namespace(config=str(cfg_path), recent=recent)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.cmd_status(args)
+        return out.getvalue()
+
+    def test_it_reports_position_and_costs_from_the_state_file(self):
+        import json
+
+        (self.tmp / "state.json").write_text(json.dumps({
+            "saved_at": 1_700_000_000_000, "symbol": "BTC_USD", "interval": "1m",
+            "strategy": "never_lose",
+            "engine": {"bars_seen": 42, "consecutive_rejections": 0,
+                       "portfolio": {"qty": 0.5, "cash": 100.0, "avg_price": 1800.0,
+                                     "fees_paid": 3.0, "slippage_paid": 1.0},
+                       "risk": {"halted_reason": None}},
+        }), encoding="utf-8")
+        text = self._run_status()
+        self.assertIn("never_lose on BTC_USD", text)
+        self.assertIn("42", text)
+        self.assertIn("4.00", text, "costs are fees plus slippage")
+
+    def test_a_halt_is_reported_prominently(self):
+        import json
+
+        (self.tmp / "state.json").write_text(json.dumps({
+            "saved_at": 1_700_000_000_000, "symbol": "BTC_USD", "strategy": "x",
+            "engine": {"bars_seen": 1, "portfolio": {"qty": 0.0, "cash": 1.0},
+                       "risk": {"halted_reason": "max drawdown"}},
+        }), encoding="utf-8")
+        self.assertIn("HALTED: max drawdown", self._run_status())
+
+    def test_a_missing_session_exits_with_a_clear_message(self):
+        with self.assertRaises(SystemExit) as caught:
+            self._run_status()
+        self.assertIn("no session state", str(caught.exception))
+
+    def test_a_corrupt_state_file_exits_rather_than_traceback(self):
+        (self.tmp / "state.json").write_text("{not json", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self._run_status()
