@@ -115,6 +115,83 @@ be a historic bull market, using tickers that are famous today precisely because
 survived — a survivorship bias that flatters buy-and-hold. It is still the fairest
 comparison available, and the direction of the result is not subtle.
 
+## "Only sell if it makes a profit" — tested
+
+The other rule worth testing: **never sell at a loss.** Hold a losing position for as
+long as it takes, and close it the moment it is worth more than it cost. No stop loss.
+That is the `never_lose` strategy, built exactly as specified — `min_profit_pct = 0`
+means it sells the instant the trade nets a single penny after all costs.
+
+It is much better than the tiny-profit-target version, and it is still not the answer.
+
+**On ten stocks that all did fine over the decade:**
+
+| strategy | final | total | vs buy-and-hold |
+|---|---|---|---|
+| buy_and_hold | $44,717 | +347% | — |
+| **never_lose** | **$31,716** | **+217%** | **−130pp** |
+| ema_cross (has a stop loss) | $23,389 | +134% | −213pp |
+
+So it beats the stop-loss strategy — in a rising market, refusing to cut is the right
+call — and it still finishes $13,000 behind doing nothing.
+
+**Then the test that decides it.** The same rule on companies that fell and did *not*
+come back — First Republic Bank (to $0.00), Peloton (−97%), Lumen (−80%), Boeing,
+Intel:
+
+| strategy | final | total | vs buy-and-hold |
+|---|---|---|---|
+| ema_cross (has a stop loss) | $14,023 | +40% | **+30pp** |
+| buy_and_hold | $10,994 | +10% | — |
+| **never_lose** | **$7,860** | **−21%** | **−31pp** |
+
+The ordering inverts. The strategy with a stop loss goes from worst to best, because
+this is the situation stop losses exist for.
+
+**On First Republic specifically**, the rule booked **148 consecutive winning trades**
+— a flawless record — and then bought at $209.93 on 10 Dec 2021 and held it for 510
+days to $0.35. A $10,000 account ended at **$34**. The same stock, traded by
+`ema_cross` with a stop loss, ended at **$17,914**.
+
+That trade never closed voluntarily. It couldn't: the rule only sells at a profit, and
+there was never going to be one. It was force-closed by the drawdown kill switch. Left
+purely to itself it would have ridden to $0.0004.
+
+### Three things the test showed that are worth keeping
+
+**A 100% win rate is trivially achievable and means nothing.** Ask for any profit
+above 0.1% and every single closed trade is a winner, on every stock, always — because
+a losing trade is never closed and so never counted. The losses are all still there,
+sitting in open positions. "I haven't sold, so I haven't lost" is an accounting story,
+not a fact about your money. This is the disposition effect, the most documented
+mistake in retail investing, and the win-rate column is exactly how it disguises
+itself.
+
+**It inverts the asymmetry you want.** A stop loss caps the downside and lets the
+upside run. This rule caps the upside — at whatever tiny profit you set — and leaves
+the downside open until the position recovers, or doesn't. On Boeing it sat in one
+position for **2,736 days**, seven and a half years, with the money doing nothing else.
+
+**Its own tuning says stop taking small profits.** Sweeping how much profit it demands
+before selling, on SPY over ten years:
+
+| demands | trades | win rate | final |
+|---|---|---|---|
+| 0.1% | 347 | 100% | $24,555 |
+| 0.5% | 209 | 100% | $32,915 |
+| 2% | 67 | 100% | $38,307 |
+| 5% | 30 | 100% | $41,198 |
+| never sells | 1 | — | **$41,450** |
+
+Monotonic. The less eagerly it takes a profit, the more it makes — and the limit of
+that sweep, demanding infinite profit before selling, *is* buy-and-hold. The strategy's
+own parameters point at holding.
+
+```bash
+python3 -m tradebot study --years 10 --strategies never_lose
+python3 -m tradebot study --years 10 --symbols FRCB,PTON,LUMN,BA,INTC --strategies never_lose,ema_cross
+```
+
 ## What you get
 
 ```
@@ -140,9 +217,9 @@ python3 -m tradebot init-config    write a starter config.toml
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
-| `strategies/` | Four strategies, including buy-and-hold and the one that fails |
+| `strategies/` | Five strategies, including buy-and-hold and two that fail instructively |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 125, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 137, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 
 ---

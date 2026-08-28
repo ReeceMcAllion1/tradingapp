@@ -8,6 +8,7 @@ from .base import Context, Strategy, available, build, register
 from .benchmark import BuyAndHold
 from .mean_reversion import MeanReversion
 from .micro_scalp import MicroScalp
+from .never_lose import NeverLose
 from .trend import EmaCross
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "EmaCross",
     "MeanReversion",
     "MicroScalp",
+    "NeverLose",
 ]

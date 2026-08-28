@@ -84,3 +84,25 @@ class CostModel:
     def breakeven_cash(self, notional: float) -> float:
         """Cash a round trip on ``notional`` costs you before any profit exists."""
         return abs(notional) * self.round_trip_bps * BPS + 2.0 * self.flat_fee
+
+    def net_breakeven_exit(self, entry_fill_price: float, qty: float | None = None) -> float:
+        """Reference price at which selling a long position nets exactly zero.
+
+        Given what you actually paid, this is the mid price the market must reach
+        before an exit puts a single penny in your pocket. Selling one tick above the
+        price you bought at is a *loss*; this is the price that is not.
+
+        Derivation, for a long: proceeds are ``R*(1-a)`` per unit after the exit
+        spread and slippage ``a``, and both legs pay commission ``f`` on their own
+        notional, so break-even needs ``R*(1-a)*(1-f) >= entry*(1+f)``. Any flat fee
+        is added on top, which is why it needs ``qty`` to be exact.
+        """
+        adverse = (self.half_spread_bps + self.slippage_bps) * BPS
+        fee_rate = self.taker_fee_bps * BPS
+        if adverse >= 1.0 or fee_rate >= 1.0:
+            raise ValueError("costs of 100% or more make every trade unwinnable")
+
+        price = entry_fill_price * (1.0 + fee_rate) / ((1.0 - fee_rate) * (1.0 - adverse))
+        if self.flat_fee > 0 and qty and qty > 0:
+            price += 2.0 * self.flat_fee / (qty * (1.0 - adverse))
+        return price

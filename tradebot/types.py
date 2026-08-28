@@ -63,14 +63,29 @@ class Decision:
     Weights just past ±1 are clamped rather than rejected, because measured exposure
     legitimately drifts there. Anything wilder is a bug in the strategy and raises -
     a request for 5x leverage should never be quietly reinterpreted as 1x.
+
+    ``target_weight=None`` means "hold exactly what I have, do not resize". That is
+    not the same as asking for the weight you currently measure: measured exposure
+    drifts above its target as a position falls (cash is slightly negative from entry
+    fees, so it is a growing fraction of a shrinking equity), and re-targeting it
+    makes the engine sell slivers to correct a gap that is pure accounting. For a
+    strategy built never to sell at a loss, those slivers are exactly the thing it
+    exists to avoid.
     """
 
-    target_weight: float = 0.0
+    target_weight: float | None = 0.0
     stop_loss: float | None = None
     take_profit: float | None = None
     reason: str = ""
 
+    @property
+    def is_hold(self) -> bool:
+        """True when this decision asks for no change to the position at all."""
+        return self.target_weight is None
+
     def __post_init__(self) -> None:
+        if self.target_weight is None:
+            return
         if not math.isfinite(self.target_weight):
             raise ValueError("target_weight must be finite")
         if abs(self.target_weight) > 1.0 + WEIGHT_TOLERANCE:

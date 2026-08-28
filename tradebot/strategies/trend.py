@@ -71,7 +71,7 @@ class EmaCross(Strategy):
             return Decision(0.0, reason=f"downtrend, fast {separation:+.2%} below slow")
 
         return Decision(
-            target_weight=ctx.hold_weight,
+            target_weight=None,
             stop_loss=stop if ctx.exposure > 0 else None,
             reason="averages too close to call, holding current position",
         )

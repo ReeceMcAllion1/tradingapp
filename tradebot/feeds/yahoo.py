@@ -114,6 +114,13 @@ class YahooFeed(Feed):
             if None in (o, h, low, c):
                 skipped += 1
                 continue
+            # A collapsed or delisted company reports zeroes once it stops trading.
+            # Those are not prices either. Dropping them leaves the series ending at
+            # the last real quote, which for a wipeout is a fraction of a cent - the
+            # loss is preserved, the arithmetic stays valid.
+            if min(o, h, low, c) <= 0:
+                skipped += 1
+                continue
 
             factor = 1.0
             if self.adjust and adjclose and i < len(adjclose) and adjclose[i] and c:

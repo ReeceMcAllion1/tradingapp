@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from .types import EquityPoint, Trade
 
 MS_PER_YEAR = 365.0 * 24.0 * 60.0 * 60.0 * 1000.0
+DAY_MS = 24.0 * 60.0 * 60.0 * 1000.0
 
 
 @dataclass
@@ -42,6 +43,9 @@ class Metrics:
     best_trade: float
     worst_trade: float
     bars: int
+    longest_trade_days: float = 0.0
+    avg_trade_days: float = 0.0
+    still_holding_days: float = 0.0
     halted_reason: str | None = None
 
     @property
@@ -81,6 +85,14 @@ class Metrics:
             f"  Sharpe (annualised) {self.sharpe:>14.2f}",
             f"  Bars processed      {self.bars:>14,}",
         ]
+        if self.trades:
+            lines.append(f"  Longest trade       {self.longest_trade_days:>11,.0f} days")
+            lines.append(f"  Average trade       {self.avg_trade_days:>11,.0f} days")
+        if self.still_holding_days > 0:
+            lines.append(
+                f"  Final position held {self.still_holding_days:>11,.0f} days   "
+                "and had to be force-closed"
+            )
         if self.halted_reason:
             lines.append(f"  Halted              {self.halted_reason:>14}")
 
@@ -173,6 +185,14 @@ def summarise(
         profit_factor = gross_wins / gross_losses
 
     net_pnls = [t.net_pnl for t in trades]
+    durations = [(t.exit_ts - t.entry_ts) / DAY_MS for t in trades]
+    # A trade the backtester had to close itself was never going to close on its own.
+    # For a strategy that refuses to sell at a loss that is the whole story, so it is
+    # reported separately rather than averaged away with the voluntary exits.
+    forced = [t for t in trades if t.reason == "end of backtest"]
+    still_holding_days = max(
+        ((t.exit_ts - t.entry_ts) / DAY_MS for t in forced), default=0.0
+    )
     return Metrics(
         starting_equity=starting_equity,
         ending_equity=ending,
@@ -193,5 +213,8 @@ def summarise(
         best_trade=max(net_pnls) if net_pnls else 0.0,
         worst_trade=min(net_pnls) if net_pnls else 0.0,
         bars=len(curve),
+        longest_trade_days=max(durations) if durations else 0.0,
+        avg_trade_days=sum(durations) / len(durations) if durations else 0.0,
+        still_holding_days=still_holding_days,
         halted_reason=halted_reason,
     )

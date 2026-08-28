@@ -157,6 +157,15 @@ class Engine:
     # ------------------------------------------------------------------ execution
 
     def _execute(self, decision: Decision, price: float, ts: int) -> list[Fill]:
+        if decision.is_hold:
+            # "Change nothing." The only thing that overrides it is a risk halt, which
+            # must always be able to flatten - see RiskManager.evaluate.
+            if self.risk.halted_reason is not None and not self.portfolio.is_flat:
+                self._record(ts, f"blocked: halted: {self.risk.halted_reason}")
+                return self.close_position(price, ts, f"halted: {self.risk.halted_reason}")
+            self._refresh_brackets(decision)
+            return []
+
         verdict = self.risk.evaluate(decision.target_weight, self.portfolio, price)
         if not verdict.approved and abs(verdict.target_weight - self.portfolio.exposure(price)) < 1e-9:
             if verdict.reason.startswith("halted"):
