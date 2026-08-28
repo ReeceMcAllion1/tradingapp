@@ -34,18 +34,32 @@ from .types import Candle, Decision, Fill, Side
 class ExecutionSettings:
     """Venue mechanics that affect whether an order is even possible.
 
-    ``rebalance_threshold`` is the minimum drift, as a fraction of equity, between the
-    position you have and the position you want before the engine will trade to close
-    the gap. Without it a strategy asking to stay "100% invested" trades every single
-    bar, because entry fees leave cash slightly negative and measured exposure
-    therefore sits a hair above its target forever. Those trades are pure cost.
+    Both settings below exist because any target weight held below 100% drifts as the
+    price moves - hold half your equity in something and a rally makes it 52% - so an
+    engine that corrects every drift trades on every single bar, for nothing. They cover
+    different fee regimes and neither is redundant; ``tests/test_adversarial.py`` pins
+    each in the regime where it is the only thing standing.
 
-    ``max_resize_cost_share`` caps what a resize may cost as a fraction of the amount
-    it moves. This one is load-bearing rather than tidy. With a flat commission the
-    fee *itself* creates the drift, so correcting it pays another fee and drifts
-    further - a runaway loop that turns buy-and-hold into hundreds of trades and can
-    empty a small account on costs alone. Refusing to pay more than a tenth of the
-    moved notional to move it breaks the cycle.
+    ``rebalance_threshold`` is the minimum drift, as a fraction of equity, worth trading
+    to close. It is the guard that matters when commission is purely proportional: a
+    rebalance then costs a fixed *fraction* of what it moves however small it is, so the
+    cost cap below never objects, and without the threshold a fixed-weight hold trades
+    on essentially every bar.
+
+    ``max_resize_cost_share`` caps what a resize may cost as a fraction of the amount it
+    moves. This is the guard for flat commissions and small accounts, where the fee
+    *itself* creates the drift: correcting it pays another fee and drifts again. Half a
+    percent of a £200 account is a £1 rebalance paying a £2 fee - a move the threshold
+    waves through - and unguarded that loop spends more than the whole account on
+    commission. Refusing to pay more than a tenth of the moved notional to move it
+    breaks the cycle.
+
+    Neither is what keeps a *fully* invested position still. That was their original
+    job, and they did it by suppressing a symptom: sizing from equity and then charging
+    the fee left cash slightly negative, so measured exposure sat permanently above its
+    target and the engine chased a gap that was pure accounting. ``_affordable`` removed
+    the cause, and a 100%-invested hold now sits at exactly 1.0 with these two turned
+    off entirely.
 
     ``max_consecutive_rejections`` halts trading after the venue refuses this many
     orders in a row. Without it a persistently rejected order - wrong symbol, too

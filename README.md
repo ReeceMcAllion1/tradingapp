@@ -426,11 +426,15 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Six strategies: a benchmark, two that fail instructively, and one that insures |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 202, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 236, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
-`tests/test_golden.py` additionally pins every strategy's end-to-end result to the
-penny, so a change to fill pricing or bracket logic cannot silently move every
-number in this file while the unit tests stay green.
+Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
+every strategy's end-to-end result to the penny, so a change to fill pricing or bracket
+logic cannot silently move every number in this file while the unit tests stay green.
+`tests/test_adversarial.py` runs hostile inputs — a one-bar series, a 99% crash, a £1
+account, a flat fee on a £200 balance — against every registered strategy, asserting
+invariants no strategy may break. It found a real one: the engine sized positions from
+equity and then charged the fee, spending money the account did not have.
 
 ---
 
