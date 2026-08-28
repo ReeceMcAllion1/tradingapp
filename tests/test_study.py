@@ -291,3 +291,78 @@ class TestTradeLog(unittest.TestCase):
         from tradebot import tradelog
         text = tradelog.render(self._trades(), limit=1, colour=False)
         self.assertIn("and 1 more", text)
+
+
+class TestShortRunsAreReportedHonestly(unittest.TestCase):
+    """A number that is suppressed must not be printed as if it were measured.
+
+    On a run too short to annualise, CAGR is set to zero - and rendering that as
+    "0.00%" says the strategy made nothing, when the case that produces it is often a
+    run that made a great deal in a few days. That is the exact failure mode this
+    package spends a README complaining about, printed in its own output. The same
+    goes for a Sharpe ratio annualised up from fifty bars, and for a profit factor of
+    infinity, which reads as a triumph rather than as "nothing has lost money yet".
+    """
+
+    def short_run(self, bars=50, growth=1.15):
+        from tradebot.strategies import build
+        from tradebot.types import Candle
+
+        candles = [
+            Candle(ts=1_700_000_000_000 + i * 60_000, open=p, high=p * 1.01,
+                   low=p * 0.99, close=p, volume=1.0)
+            for i, p in enumerate(100.0 * growth**i for i in range(bars))
+        ]
+        return run_backtest(
+            candles, build("buy_and_hold"), starting_cash=1000.0,
+            limits=RiskLimits(max_position_pct=1.0, max_daily_loss_pct=0.99,
+                              max_drawdown_pct=0.99, max_trades_per_day=1000,
+                              min_trade_notional=1.0, cooldown_bars_after_loss=0),
+            execution=ExecutionSettings(min_notional=1.0),
+        ).metrics
+
+    def test_a_short_run_does_not_report_a_cagr_at_all(self):
+        metrics = self.short_run()
+        self.assertFalse(metrics.can_annualise)
+        rendered = metrics.render()
+        self.assertIn("Annualised (CAGR)", rendered)
+        self.assertIn("too short to annualise", rendered)
+        self.assertNotIn("Annualised (CAGR)            0.00%", rendered)
+
+    def test_the_run_that_triggers_it_actually_made_money(self):
+        """Guards against the fix hiding a real zero instead of a suppressed one."""
+        self.assertGreater(self.short_run().total_return_pct, 100.0)
+
+    def test_a_short_run_does_not_report_a_sharpe_ratio(self):
+        rendered = self.short_run().render()
+        self.assertIn("Sharpe (annualised)", rendered)
+        self.assertRegex(rendered, r"Sharpe \(annualised\)\s+n/a")
+
+    def test_an_infinite_profit_factor_is_explained_not_printed(self):
+        rendered = self.short_run().render()
+        self.assertNotIn("inf", rendered)
+        self.assertIn("nothing has lost money yet", rendered)
+
+    def test_the_span_is_given_in_a_unit_that_reads_sensibly(self):
+        self.assertIn("minutes", self.short_run(bars=50).render())
+
+    def test_a_long_run_still_reports_both_figures(self):
+        from tradebot.strategies import build
+
+        candles = SyntheticFeed(bars=3000, seed=4, interval_ms=86_400_000).generate()
+        metrics = run_backtest(
+            candles, build("buy_and_hold"), starting_cash=1000.0,
+            limits=RiskLimits(max_position_pct=1.0, max_daily_loss_pct=0.99,
+                              max_drawdown_pct=0.99, max_trades_per_day=1000,
+                              min_trade_notional=1.0, cooldown_bars_after_loss=0),
+            execution=ExecutionSettings(min_notional=1.0),
+        ).metrics
+        self.assertTrue(metrics.can_annualise)
+        self.assertNotIn("too short to annualise", metrics.render())
+
+    def test_cost_drag_is_still_annualised_on_a_short_run(self):
+        """Deliberately exempt: it scales linearly, and it has to warn early to help."""
+        metrics = self.short_run()
+        self.assertFalse(metrics.can_annualise)
+        self.assertGreater(metrics.cost_drag_annual_pct, 0.0)
+        self.assertIn("%/year at this rate", metrics.render())

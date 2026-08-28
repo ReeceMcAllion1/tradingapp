@@ -191,6 +191,12 @@ def render(study: Study, currency: str = "$") -> str:
             )
 
     out.append("")
+    short = [r for r in study.rows if not r.metrics.can_annualise]
+    if short:
+        out.append(
+            f"  Note: {len(short)} of {len(study.rows)} runs are too short to annualise; "
+            "they are excluded from the CAGR and Sharpe averages."
+        )
     out.append("  Averages across all symbols")
     out.append("  " + "-" * (len(header) - 2))
     out.append(header)
@@ -202,9 +208,20 @@ def render(study: Study, currency: str = "$") -> str:
         count = len(rows)
         avg_final = sum(r.metrics.ending_equity for r in rows) / count
         avg_total = sum(r.metrics.total_return_pct for r in rows) / count
-        avg_cagr = sum(r.metrics.cagr_pct for r in rows) / count
+        # CAGR and Sharpe are suppressed to zero on any series too short to annualise.
+        # Averaging those zeros in would quietly drag the column toward nothing and
+        # make a good strategy look mediocre, so short rows are left out of these two
+        # and counted separately.
+        annualisable = [r for r in rows if r.metrics.can_annualise]
+        avg_cagr = (
+            sum(r.metrics.cagr_pct for r in annualisable) / len(annualisable)
+            if annualisable else 0.0
+        )
+        avg_sharpe = (
+            sum(r.metrics.sharpe for r in annualisable) / len(annualisable)
+            if annualisable else 0.0
+        )
         avg_dd = sum(r.metrics.max_drawdown_pct for r in rows) / count
-        avg_sharpe = sum(r.metrics.sharpe for r in rows) / count
         total_trades = sum(r.metrics.trades for r in rows)
         avg_costs = sum(r.metrics.total_costs for r in rows) / count
         avg_drag = sum(r.metrics.cost_drag_annual_pct for r in rows) / count

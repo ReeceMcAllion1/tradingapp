@@ -81,6 +81,17 @@ class Metrics:
         return self.cost_drag_pct / span
 
     @property
+    def can_annualise(self) -> bool:
+        """Is this run long enough for a per-year figure to mean anything?
+
+        Below about eighteen days, annualising is extrapolation rather than
+        measurement: a good fortnight becomes a four-figure CAGR. ``cost_drag_annual_
+        pct`` deliberately ignores this - it scales linearly rather than compounding,
+        and it is a warning that has to fire early to be worth anything.
+        """
+        return self.years >= MIN_ANNUALISE_YEARS
+
+    @property
     def cost_share_of_gross(self) -> float:
         """Costs as a multiple of gross profit. Above 1.0 means they ate all of it."""
         if abs(self.gross_pnl) < 1e-12:
@@ -95,7 +106,9 @@ class Metrics:
             f"  Starting equity     {self.starting_equity:>14,.2f}",
             f"  Ending equity       {self.ending_equity:>14,.2f}",
             f"  Total return        {self.total_return_pct:>13.2f}%",
-            f"  Annualised (CAGR)   {self.cagr_pct:>13.2f}%   over {self.years:.1f} years",
+            f"  Annualised (CAGR)   {self.cagr_pct:>13.2f}%   over {self.years:.1f} years"
+            if self.can_annualise else
+            f"  Annualised (CAGR)   {'n/a':>14}   {_too_short(self.years)}",
             "",
             f"  Gross P&L           {self.gross_pnl:>14,.2f}   the market move, mid to mid",
             f"  Spread + slippage   {-self.slippage_paid:>14,.2f}",
@@ -108,12 +121,16 @@ class Metrics:
             f"  Trades              {self.trades:>14,}",
             f"  Win rate, on price  {self.gross_win_rate * 100:>13.1f}%   before costs",
             f"  Win rate, net       {self.win_rate * 100:>13.1f}%   after costs",
-            f"  Profit factor       {self.profit_factor:>14.2f}",
+            f"  Profit factor       {self.profit_factor:>14.2f}"
+            if math.isfinite(self.profit_factor) else
+            f"  Profit factor       {'n/a':>14}   nothing has lost money yet",
             f"  Average trade       {self.avg_trade:>14,.2f}",
             f"  Best / worst        {self.best_trade:>14,.2f} / {self.worst_trade:,.2f}",
             "",
             f"  Max drawdown        {self.max_drawdown_pct:>13.2f}%",
-            f"  Sharpe (annualised) {self.sharpe:>14.2f}",
+            f"  Sharpe (annualised) {self.sharpe:>14.2f}"
+            if self.can_annualise else
+            f"  Sharpe (annualised) {'n/a':>14}   {_too_short(self.years)}",
             f"  Bars processed      {self.bars:>14,}",
         ]
         if self.trades:
@@ -152,13 +169,30 @@ class Metrics:
         return "\n".join(lines) + "\n"
 
 
+#: Below this span, a per-year figure is extrapolation rather than measurement.
+#: Roughly eighteen days - long enough that one good week cannot dominate the answer.
+MIN_ANNUALISE_YEARS = 0.05
+
+
+def _too_short(years: float) -> str:
+    """Say how long the run actually is, in a unit that reads sensibly at that size."""
+    days = years * 365.0
+    if days >= 1.0:
+        span = f"{days:,.1f} days"
+    elif days * 24.0 >= 1.0:
+        span = f"{days * 24.0:,.1f} hours"
+    else:
+        span = f"{days * 24.0 * 60.0:,.0f} minutes"
+    return f"only {span} - too short to annualise"
+
+
 def _cagr(start: float, end: float, years: float) -> float:
     """Compound annual growth rate, as a percent.
 
     Undefined for a wiped-out account (you cannot annualise a total loss), and
     meaningless over a span too short to annualise, so both return 0.
     """
-    if start <= 0 or end <= 0 or years < 0.05:
+    if start <= 0 or end <= 0 or years < MIN_ANNUALISE_YEARS:
         return 0.0
     return ((end / start) ** (1.0 / years) - 1.0) * 100.0
 
