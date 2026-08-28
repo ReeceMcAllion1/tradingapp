@@ -312,6 +312,44 @@ class TestLiveRunner(unittest.TestCase):
                 f"the resumed run re-processed bars at or before {stopped_at}",
             )
 
+    def test_a_resumed_overdraft_is_flagged_rather_than_hidden(self):
+        """State written before the solvency fix carries money the account never had.
+
+        Warned about, not corrected: silently adjusting the balance would rewrite a
+        recorded trading history to make the software look better, which is worse than
+        the bug it covers up.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, _ = self._counting_runner(tmp, StubFeed([]))
+            state = {
+                "symbol": runner.config.market.symbol,
+                "engine": {
+                    "portfolio": {"cash": -1.4004, "qty": 0.0126, "avg_price": 79_225.57},
+                    "risk": {},
+                },
+            }
+            Path(runner.config.live.state_file).write_text(json.dumps(state), encoding="utf-8")
+
+            with self.assertLogs("tradebot.live", level="WARNING") as caught:
+                self.assertTrue(runner.load_state())
+            self.assertIn("overdraft", "\n".join(caught.output))
+            self.assertAlmostEqual(runner.portfolio.cash, -1.4004,
+                                   msg="the balance must not be quietly rewritten")
+
+    def test_a_healthy_resume_says_nothing_about_overdrafts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, _ = self._counting_runner(tmp, StubFeed([]))
+            state = {
+                "symbol": runner.config.market.symbol,
+                "engine": {
+                    "portfolio": {"cash": 12.0, "qty": 0.0126, "avg_price": 79_225.57},
+                    "risk": {},
+                },
+            }
+            Path(runner.config.live.state_file).write_text(json.dumps(state), encoding="utf-8")
+            with self.assertNoLogs("tradebot.live", level="WARNING"):
+                self.assertTrue(runner.load_state())
+
     def test_max_bars_counts_bars_processed_not_bars_offered(self):
         """Otherwise the skipped duplicate spends the budget and the run does nothing.
 

@@ -299,4 +299,28 @@ class LiveRunner:
             path, self.portfolio.qty, self.portfolio.cash,
             f", HALTED ({self.risk.halted_reason})" if self.risk.halted_reason else "",
         )
+        self._warn_if_overdrawn()
         return True
+
+    def _warn_if_overdrawn(self) -> None:
+        """Flag a resumed position that was funded with money the account never had.
+
+        An earlier version sized a position from equity and then charged the fee on
+        top, leaving cash a little below zero - an unfunded overdraft the simulation
+        invented. The engine no longer does that, but a state file written back then
+        still carries it, and resuming inherits it.
+
+        This warns rather than corrects. Silently adjusting the balance would rewrite
+        a recorded trading history to make the software look better, which is a worse
+        sin than the original bug; and refusing to resume would strand a bot holding a
+        real position. Clearing the state file and starting fresh is the operator's
+        call, not this code's.
+        """
+        if self.portfolio.cash >= 0 or self.portfolio.qty <= 0:
+            return
+        log.warning(
+            "resumed state has cash at %.4f on a long position - this file predates the "
+            "solvency fix and carries an overdraft of that size. The figures are off by "
+            "about that much; clear %s to start clean.",
+            self.portfolio.cash, self.state_path,
+        )
