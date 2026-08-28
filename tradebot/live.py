@@ -70,6 +70,7 @@ class LiveRunner:
         self._bars = 0
         self._logged_trades = 0
         self._started_at = int(time.time() * 1000)
+        self._last_bar_ts = 0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -96,6 +97,13 @@ class LiveRunner:
         flat = Context(exposure=0.0, equity=self.config.account.starting_cash, costs=self.config.costs)
         for candle in history:
             self.strategy.on_candle(candle, flat)
+
+        # Remember where history ended. A live stream polls for the newest *closed*
+        # bar, and on a fresh stream that is the same bar warm-up just finished on, so
+        # without this every start feeds one bar through the strategy twice and
+        # advances its indicators an extra step.
+        if history:
+            self._last_bar_ts = max(self._last_bar_ts, history[-1].ts)
         log.info("warmed up on %d historical bars", len(history))
         return len(history)
 
@@ -125,6 +133,17 @@ class LiveRunner:
         self.shutdown()
 
     def on_bar(self, candle: Candle) -> None:
+        # Bars must arrive strictly newer, once each. A feed can repeat one after a
+        # reconnect or a paging overlap, and warm-up has usually already shown the
+        # strategy the newest closed bar. Replaying it advances every indicator an
+        # extra step on a bar that only happened once, which silently shifts every
+        # signal that follows. An older bar is worse still: it would re-open a risk
+        # day that has already closed.
+        if candle.ts <= self._last_bar_ts:
+            log.debug("ignoring bar %s: not newer than %s", candle.ts, self._last_bar_ts)
+            return
+        self._last_bar_ts = candle.ts
+
         fills = self.engine.process(candle)
         equity = self.portfolio.equity(candle.close)
 
@@ -236,6 +255,7 @@ class LiveRunner:
             "symbol": self.config.market.symbol,
             "interval": self.config.market.interval,
             "strategy": self.strategy.name,
+            "last_bar_ts": self._last_bar_ts,
             "engine": self.engine.state(),
         }
         path = self.state_path
@@ -266,6 +286,8 @@ class LiveRunner:
         # Keep the original start time across restarts, so a resumed run still reports
         # its true age rather than restarting the clock.
         self._started_at = int(payload.get("started_at") or self._started_at)
+        # Resuming into the bar the previous process already handled would repeat it.
+        self._last_bar_ts = max(self._last_bar_ts, int(payload.get("last_bar_ts") or 0))
         self.engine.restore(payload["engine"])
         log.info(
             "resumed from %s: position %.8f, cash %.2f%s",

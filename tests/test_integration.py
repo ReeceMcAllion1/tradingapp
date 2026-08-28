@@ -35,6 +35,26 @@ class StubFeed:
         yield from self.candles
 
 
+class RealisticFeed:
+    """Behaves like a live feed: recent history, and a stream that re-polls.
+
+    ``StubFeed`` returns the *first* bars from history and then streams the whole
+    series, which never overlaps. Real feeds return the most recent bars and then poll
+    for the newest closed one - which, on a fresh stream, is the bar warm-up just
+    finished on. That overlap is the thing being tested.
+    """
+
+    def __init__(self, candles, upto):
+        self.candles = candles
+        self.upto = upto
+
+    def history(self, limit):
+        return self.candles[: self.upto][-limit:]
+
+    def stream(self):
+        yield from self.candles[self.upto - 1 :]
+
+
 class TestStrategies(unittest.TestCase):
     def setUp(self):
         self.candles = SyntheticFeed(bars=1500, seed=5).generate()
@@ -229,6 +249,83 @@ class TestLiveRunner(unittest.TestCase):
             other = self._runner(tmp, candles)
             other.config.market.symbol = "ETH_USD"
             self.assertFalse(other.load_state(), "must not resume another market's position")
+
+    def _counting_runner(self, tmpdir, feed):
+        from tradebot.strategies.base import Strategy
+        from tradebot.types import Decision
+
+        class Counting(Strategy):
+            name = "counting"
+            warmup = 0
+
+            def __init__(self):
+                self.seen = []
+
+            def on_candle(self, c, ctx):
+                self.seen.append(c.ts)
+                return Decision(0.0, reason="flat")
+
+        config = Config()
+        config.live.state_file = str(Path(tmpdir) / "state.json")
+        config.live.trades_file = str(Path(tmpdir) / "trades.csv")
+        config.account.starting_cash = 1000.0
+        config.risk = RiskLimits(max_position_pct=0.5, max_trades_per_day=1000)
+        strategy = Counting()
+        return LiveRunner(config=config, strategy=strategy, feed=feed,
+                          broker=PaperBroker(config.costs)), strategy
+
+    def test_a_bar_is_never_shown_to_the_strategy_twice(self):
+        """Warm-up ends on the newest closed bar; the stream then offers it again.
+
+        Replaying it advances every indicator an extra step on a bar that only
+        happened once, shifting every signal after it. This is not a crash-only case -
+        it happened on every single start.
+        """
+        candles = SyntheticFeed(bars=200, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, strategy = self._counting_runner(tmp, RealisticFeed(candles, 100))
+            with contextlib.redirect_stdout(io.StringIO()):
+                runner.run(max_bars=4)
+
+            self.assertEqual(
+                len(strategy.seen), len(set(strategy.seen)),
+                "the same bar reached the strategy more than once",
+            )
+
+    def test_a_restart_does_not_reprocess_the_bar_it_stopped_on(self):
+        candles = SyntheticFeed(bars=200, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            first, _ = self._counting_runner(tmp, RealisticFeed(candles, 100))
+            with contextlib.redirect_stdout(io.StringIO()):
+                first.run(max_bars=3)
+            stopped_at = first._last_bar_ts
+
+            second, strategy = self._counting_runner(tmp, RealisticFeed(candles, 100))
+            with contextlib.redirect_stdout(io.StringIO()):
+                second.run(max_bars=3)
+
+            engine_bars = [
+                point.ts for point in second.portfolio.equity_curve
+            ]
+            self.assertTrue(
+                all(ts > stopped_at for ts in engine_bars),
+                f"the resumed run re-processed bars at or before {stopped_at}",
+            )
+
+    def test_an_out_of_order_bar_is_ignored(self):
+        """An older bar would re-open a risk day that has already closed."""
+        candles = SyntheticFeed(bars=200, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, strategy = self._counting_runner(tmp, RealisticFeed(candles, 100))
+            runner.warm_up()
+            before = len(runner.portfolio.equity_curve)
+
+            runner.on_bar(candles[10])
+            self.assertEqual(len(runner.portfolio.equity_curve), before,
+                             "a bar from the past was processed")
+
+            runner.on_bar(candles[150])
+            self.assertEqual(len(runner.portfolio.equity_curve), before + 1)
 
     def test_a_corrupt_state_file_starts_fresh_rather_than_crashing(self):
         candles = SyntheticFeed(bars=100, seed=1).generate()
