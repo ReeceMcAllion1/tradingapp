@@ -293,3 +293,32 @@ class TestSessionReport(unittest.TestCase):
     def test_nothing_to_report_is_handled(self):
         from tradebot import report as report_mod
         self.assertIn("No sessions", report_mod.render([]))
+
+
+class TestBenchmarkWindow(unittest.TestCase):
+    """The benchmark must span the session's clock, not its bar count.
+
+    A session that stalls - a suspended machine, a dropped feed - has far fewer bars
+    than elapsed minutes. Sizing the window by bar count then compares a days-old
+    position against a few minutes of market, which reads as a wild over- or
+    under-performance that never happened.
+    """
+
+    def test_bars_needed_covers_elapsed_time_not_bar_count(self):
+        from tradebot import report as report_mod
+
+        r = report_mod.SessionReport(
+            name="x", symbol="BTC_USD", interval="1m", strategy="x",
+            bars=39, started=None, updated=None, equity=1000.0, position=0.0,
+            starting_cash=1000.0, costs=0.0, trades=[],
+        )
+        # Four hours elapsed but only 39 bars recorded.
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(tz=timezone.utc)
+        r.started = now - timedelta(hours=4)
+        r.updated = now
+
+        self.assertAlmostEqual(r.days, 4 / 24, places=3)
+        needed = int(r.days * 24 * 60) + 10
+        self.assertGreater(needed, 200, "must ask for ~240 bars, not 39")
+        self.assertGreater(needed, r.bars * 5)

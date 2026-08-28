@@ -595,10 +595,16 @@ def cmd_report(args) -> int:
     if not args.offline:
         for r in reports:
             try:
-                bars = CryptoComFeed(
-                    symbol=r.symbol, interval=r.interval or "1m"
-                ).history(max(r.bars + 5, 50))
-                window = bars[-max(r.bars, 2):]
+                feed = CryptoComFeed(symbol=r.symbol, interval=r.interval or "1m")
+                # Select the benchmark window by the session's real clock, not by how
+                # many bars it processed. A session that stalled - a suspended machine,
+                # a dropped feed - has fewer bars than elapsed minutes, and sizing the
+                # window by bar count would then compare a days-old position against a
+                # few minutes of market. Ask for enough bars to cover the elapsed time.
+                needed = max(int(r.days * 24 * 60 / max(feed.interval_ms / 60000, 1)) + 10, 50)
+                bars = feed.history(min(needed, 20_000))
+                start_ms = r.started.timestamp() * 1000 if r.started else 0
+                window = [c for c in bars if c.ts >= start_ms] or bars[-2:]
                 if len(window) >= 2:
                     r.benchmark_return_pct = (window[-1].close / window[0].open - 1.0) * 100.0
                     report_mod.mark_to_market(r, window[-1].close)
