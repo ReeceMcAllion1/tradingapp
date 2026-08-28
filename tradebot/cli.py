@@ -474,16 +474,28 @@ def cmd_preflight(args) -> int:
             passive = backtest_mod.run(strategy=build("buy_and_hold"), **common).metrics
             drag = active.cost_drag_annual_pct
             gap = active.total_return_pct - passive.total_return_pct
-            verdict = (
-                gap > 0,
+            detail = (
                 f"{strategy.name} returned {active.total_return_pct:+.1f}% vs "
                 f"{passive.total_return_pct:+.1f}% for holding {args.benchmark_symbol.upper()} "
                 f"over {active.years:.0f} years ({gap:+.1f}pp). "
-                + ("It beat holding on this data - test other symbols and periods before "
-                   "believing it." if gap > 0 else
-                   "Holding won. Trading this strategy would have cost you money you "
-                   "would have had by doing nothing."),
             )
+            if gap > 0:
+                # In-sample, so this is the optimistic reading by construction. Walking
+                # this package's own best candidate forward gave up 80% of its apparent
+                # edge; a check that stayed quiet about that would be selling the same
+                # illusion the rest of the tool exists to puncture.
+                detail += (
+                    "That is IN-SAMPLE and therefore the best case: the strategy and its "
+                    "parameters were chosen knowing this data. Confirm it with "
+                    "`tradebot walkforward` before believing it."
+                )
+            else:
+                detail += (
+                    "Holding won, and this is the optimistic in-sample reading. Trading "
+                    "this strategy would have cost you money you would have had by "
+                    "doing nothing."
+                )
+            verdict = (gap > 0, detail)
         except Exception as exc:  # noqa: BLE001 - a failed check must not hide the rest
             print(f"  (could not run the benchmark backtest: {exc})", file=sys.stderr)
 

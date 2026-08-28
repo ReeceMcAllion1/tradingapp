@@ -205,6 +205,16 @@ def run(
     ))
 
     checks.append(Check(
+        "Out-of-sample proof",
+        False,
+        "no walk-forward result recorded. An in-sample backtest is the best case by "
+        "construction - this package's own best candidate gave up 80% of its apparent "
+        "edge when the parameters were chosen without seeing the test data. Run "
+        "`tradebot walkforward` and judge by that column.",
+        blocking=False,
+    ))
+
+    checks.append(Check(
         "Durable host",
         False,
         "a live bot must run somewhere that stays up. If the machine stops, the bot "
