@@ -115,7 +115,9 @@ def load(path: str | Path | None = None) -> Config:
     if not target.exists():
         if path is not None:
             raise FileNotFoundError(f"no config file at {target}")
-        return Config()
+        config = Config()
+        _align_lot_size(config, {})
+        return config
 
     with target.open("rb") as handle:
         raw = tomllib.load(handle)
@@ -134,4 +136,29 @@ def load(path: str | Path | None = None) -> Config:
         execution=ExecutionSettings(**_subset(ExecutionSettings, raw.get("execution", {}), "execution")),
         live=LiveConfig(**_subset(LiveConfig, raw.get("live", {}), "live")),
     )
+    _align_lot_size(config, raw)
     return config
+
+
+def _align_lot_size(config: Config, raw: dict) -> None:
+    """Make the simulator round quantities the way the venue will.
+
+    Two settings describe the same physical fact from opposite ends: ``execution.
+    qty_step`` is the lot size the backtester rounds to, and ``live.qty_decimals`` is
+    the precision the venue accepts. Nothing kept them in step, and their defaults
+    disagree - the simulator rounded to nothing at all while the live broker floors to
+    six decimals. Set ``qty_decimals = 2`` for your venue and the backtest happily
+    filled sizes the exchange would truncate, which is exactly the paper-versus-live
+    divergence this package exists to avoid.
+
+    So when ``qty_step`` has been left alone, derive it from the venue precision. An
+    explicit ``qty_step`` in the file always wins: someone who wrote a lot size meant
+    it, and a venue with a step that is not a power of ten (0.25, say) cannot be
+    expressed as a number of decimals at all.
+    """
+    if "qty_step" in raw.get("execution", {}):
+        return
+    decimals = config.live.qty_decimals
+    if decimals < 0:
+        raise ValueError("live.qty_decimals must not be negative")
+    config.execution.qty_step = 10.0**-decimals

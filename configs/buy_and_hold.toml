@@ -50,7 +50,10 @@ allow_short = false           # shorting is modelled without borrow cost or marg
 
 
 [execution]
-qty_step = 0.0            # venue lot size; 0 means no rounding
+qty_step = 0.0            # venue lot size. Left at 0, this follows live.qty_decimals
+                          # below, so the backtest truncates sizes exactly the way
+                          # the exchange will. Set it explicitly only for a venue
+                          # whose step is not a power of ten (0.25, say).
 min_notional = 10.0       # exchange minimum order value
 
 # How far the position may drift from its target before the engine corrects it.

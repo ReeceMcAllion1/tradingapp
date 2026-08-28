@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -187,6 +188,56 @@ class TestCandleValidation(unittest.TestCase):
     def test_a_negative_price_is_rejected(self):
         with self.assertRaises(ValueError):
             Candle(ts=1, open=-1, high=10, low=1, close=5, volume=1)
+
+
+class TestLotSizeAlignment(unittest.TestCase):
+    """The simulator must round quantities the way the venue will.
+
+    ``execution.qty_step`` and ``live.qty_decimals`` describe the same physical fact
+    from opposite ends, and their defaults disagreed: the backtester rounded to
+    nothing while the live broker floors to six decimals. Set a coarse precision for
+    your venue and the backtest filled sizes the exchange would truncate - the exact
+    paper-versus-live divergence the shared engine exists to prevent.
+    """
+
+    def write(self, body):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        handle.write(body)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_qty_step_follows_the_venue_precision_by_default(self):
+        path = self.write("[live]\nqty_decimals = 2\n")
+        self.assertAlmostEqual(config_mod.load(path).execution.qty_step, 0.01)
+
+    def test_the_defaults_agree_with_each_other(self):
+        loaded = config_mod.load(self.write(""))
+        self.assertAlmostEqual(loaded.execution.qty_step, 10.0**-loaded.live.qty_decimals)
+
+    def test_an_explicit_lot_size_is_never_overridden(self):
+        """A venue step of 0.25 cannot be written as a number of decimals at all."""
+        path = self.write("[execution]\nqty_step = 0.25\n\n[live]\nqty_decimals = 6\n")
+        self.assertAlmostEqual(config_mod.load(path).execution.qty_step, 0.25)
+
+    def test_zero_decimals_means_whole_units(self):
+        path = self.write("[live]\nqty_decimals = 0\n")
+        self.assertAlmostEqual(config_mod.load(path).execution.qty_step, 1.0)
+
+    def test_the_engine_and_the_venue_round_a_size_to_the_same_place(self):
+        """The point of the alignment: both paths must truncate identically."""
+        from tradebot.brokers.cryptocom import floor_to_decimals
+
+        for decimals in range(0, 7):
+            with self.subTest(decimals=decimals):
+                loaded = config_mod.load(self.write(f"[live]\nqty_decimals = {decimals}\n"))
+                for qty in (0.123456789, 1.9999999, 12.5, 0.000001):
+                    self.assertAlmostEqual(
+                        loaded.execution.round_qty(qty),
+                        floor_to_decimals(qty, decimals),
+                        places=9,
+                        msg=f"simulator and venue disagree on {qty} at {decimals} dp",
+                    )
 
 
 if __name__ == "__main__":

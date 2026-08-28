@@ -137,6 +137,34 @@ class TestPreflight(unittest.TestCase):
         self.assertTrue(any(c.name == "Paper trading" for c in checks))
 
 
+class TestOrderCapConsequence(unittest.TestCase):
+    """The cap trims rather than refuses, which is not what the backtest did."""
+
+    def detail(self, cash, cap, position_pct):
+        config = Config()
+        config.account.starting_cash = cash
+        config.live.max_order_notional = cap
+        config.risk = RiskLimits(max_position_pct=position_pct)
+        for check in preflight.run(config):
+            if check.name == "Order size cap":
+                return check.detail
+        self.fail("no order size cap check")
+
+    def test_it_says_how_many_orders_a_full_position_will_take(self):
+        detail = self.detail(cash=1000.0, cap=50.0, position_pct=0.25)
+        self.assertIn("5 orders", detail)
+        self.assertIn("max_trades_per_day", detail)
+
+    def test_nothing_is_said_when_the_cap_does_not_bite(self):
+        detail = self.detail(cash=100.0, cap=1000.0, position_pct=0.25)
+        self.assertNotIn("orders rather than one", detail)
+
+    def test_a_cap_that_needs_more_orders_than_the_daily_limit_still_reports(self):
+        """The worst case: the position can never be reached in a single day."""
+        detail = self.detail(cash=100_000.0, cap=50.0, position_pct=1.0)
+        self.assertIn("2000 orders", detail)
+
+
 if __name__ == "__main__":
     unittest.main()
 

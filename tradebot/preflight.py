@@ -15,6 +15,7 @@ decision is made against facts rather than optimism.
 from __future__ import annotations
 
 import csv
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -185,12 +186,27 @@ def run(
 
     cap = config.live.max_order_notional
     cash = config.account.starting_cash
+    sensible = cap <= max(cash * 0.1, 25.0)
+    intended = cash * config.risk.max_position_pct
+    # How the cap actually behaves is worth saying out loud. It does not refuse an
+    # oversized order, it trims it - so a position the backtest opened in one trade is
+    # reached in several, each paying its own commission and each counting against
+    # max_trades_per_day. That is the right trade for a first live run, but it is not
+    # what the backtest did, and nobody should discover the difference from a fee bill.
+    legs = math.ceil(intended / cap) if cap > 0 else 0
+    trimming = (
+        f" A full position is {intended:,.2f}, so the cap fills it in about {legs} orders "
+        f"rather than one - each paying commission and counting against "
+        f"max_trades_per_day ({config.risk.max_trades_per_day})."
+        if legs > 1 else ""
+    )
     checks.append(Check(
         "Order size cap",
-        cap <= max(cash * 0.1, 25.0),
+        sensible,
         f"max_order_notional is {cap:,.2f} against an account of {cash:,.2f}. "
-        + ("Sensible for a first live run." if cap <= max(cash * 0.1, 25.0)
-           else "Start far smaller - the smallest order the venue accepts."),
+        + ("Sensible for a first live run." if sensible
+           else "Start far smaller - the smallest order the venue accepts.")
+        + trimming,
         blocking=False,
     ))
 
