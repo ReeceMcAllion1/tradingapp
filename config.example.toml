@@ -1,0 +1,77 @@
+# tradebot configuration
+#
+# Copy to config.toml (or run: python -m tradebot init-config) and edit.
+# API keys are NOT read from this file - see [live] below.
+
+[market]
+symbol = "BTC_USD"        # Crypto.com instrument name
+interval = "5m"           # 1m 5m 15m 30m 1h 2h 4h 12h 1D 7D
+history_bars = 2000
+
+[account]
+starting_cash = 1000.0    # paper/backtest starting balance
+currency = "GBP"          # display only - it does not convert anything
+
+
+# The most important section in the file.
+#
+# These are what a round trip actually costs you. Get them from your venue's fee
+# schedule, then make them worse - the quoted taker fee is the part you can look up,
+# and slippage is the part that surprises you. Everything the system reports is only
+# as honest as these four numbers.
+#
+# Defaults below total 28 bp per round trip (0.28%), which is realistic for retail
+# crypto on a liquid pair.
+[costs]
+taker_fee_bps = 10.0      # crossing the spread; what a market order pays
+maker_fee_bps = 5.0       # resting on the book
+half_spread_bps = 2.0     # half the bid-ask gap, paid on entry and again on exit
+slippage_bps = 2.0        # price moving away from you between decision and fill
+
+
+# Limits the strategy cannot talk its way past. These are what make the system safe
+# to leave running unattended.
+[risk]
+max_position_pct = 0.25       # never put more than 25% of equity into one position
+max_daily_loss_pct = 0.02     # down 2% today -> stop until tomorrow
+max_drawdown_pct = 0.20       # down 20% from peak -> kill switch, stop permanently
+max_trades_per_day = 20       # overtrading is how you pay fees for no reason
+min_trade_notional = 10.0     # ignore orders too small to be worth the cost
+min_edge_multiple = 2.0       # a signal must target 2x the round-trip cost to qualify
+cooldown_bars_after_loss = 3  # sit out a few bars after a loser
+allow_short = false           # shorting is modelled without borrow cost or margin calls
+
+
+[execution]
+qty_step = 0.0            # venue lot size; 0 means no rounding
+min_notional = 10.0       # exchange minimum order value
+
+
+[strategy]
+name = "ema_cross"        # run `python -m tradebot strategies` to see the options
+
+[strategy.params]
+fast = 20
+slow = 50
+stop_atr_multiple = 2.5
+
+
+# Live trading. Off by default, and it takes four separate steps to arm it:
+#
+#   1. enabled = true here
+#   2. CRYPTOCOM_API_KEY and CRYPTOCOM_API_SECRET set in your environment
+#      (never in this file - this file can end up in git)
+#   3. dry_run = false here
+#   4. --yes-really-trade-live on the command line, every single run
+#
+# Do all four only after a backtest and weeks of paper trading. Set the API key to
+# trade-only permissions, disable withdrawals on it, and restrict it to your IP.
+[live]
+enabled = false
+dry_run = true
+max_order_notional = 50.0   # hard client-side cap on any single order
+qty_decimals = 6
+poll_seconds = 15.0
+state_file = "state/live_state.json"
+log_file = "state/tradebot.log"
+reconcile_every_bars = 20   # re-check the real position at the exchange this often

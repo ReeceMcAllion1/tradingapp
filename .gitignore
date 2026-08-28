@@ -1,0 +1,22 @@
+# Local configuration - may contain venue-specific settings
+config.toml
+
+# Runtime state: positions, equity, logs
+state/
+*.log
+
+# Market data
+data/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Never commit credentials
+.env
+*.key
+*.secret
