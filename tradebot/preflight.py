@@ -27,6 +27,11 @@ from .config import Config
 MIN_PAPER_DAYS = 30
 MIN_PAPER_TRADES = 20
 
+#: A paper record that stopped weeks ago describes a market that no longer exists, and
+#: is also how a stale or stray file passes for evidence. Either way it is not a
+#: reason to risk money today.
+MAX_RECORD_AGE_DAYS = 7
+
 
 @dataclass
 class Check:
@@ -51,6 +56,16 @@ def _read_paper_trades(path: str) -> list[dict]:
             return list(csv.DictReader(handle))
     except (OSError, csv.Error):
         return []
+
+
+def _newest(rows: list[dict]) -> datetime | None:
+    dates = []
+    for row in rows:
+        try:
+            dates.append(datetime.strptime(row["closed"], "%Y-%m-%d").replace(tzinfo=timezone.utc))
+        except (KeyError, ValueError):
+            continue
+    return max(dates) if dates else None
 
 
 def _span_days(rows: list[dict]) -> float:
@@ -98,6 +113,19 @@ def run(config: Config, backtest_verdict: tuple[bool, str] | None = None) -> lis
             "Paper trading",
             True,
             f"{len(rows)} trades over {days:.0f} days, net {net:+,.2f}",
+        ))
+
+    newest = _newest(rows)
+    if newest is not None:
+        age = (datetime.now(tz=timezone.utc) - newest).total_seconds() / 86_400
+        checks.append(Check(
+            "Record is current",
+            age <= MAX_RECORD_AGE_DAYS,
+            f"most recent trade closed {newest:%Y-%m-%d}"
+            + ("" if age <= MAX_RECORD_AGE_DAYS else
+               f", {age:.0f} days ago. That describes a market that has moved on - and "
+               "a stale or stray file is how junk passes for evidence. Re-run paper "
+               "trading before trusting it."),
         ))
 
     if rows and net <= 0:

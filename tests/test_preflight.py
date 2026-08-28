@@ -102,6 +102,24 @@ class TestPreflight(unittest.TestCase):
         self.assertFalse(check.blocking)
         self.assertIn("stays up", check.detail)
 
+    def test_a_stale_record_blocks(self):
+        """A paper log from years ago is not evidence about today's market."""
+        paper_csv(self.config.live.trades_file,
+                  [("2020-01-01", "2020-03-15", 1.0) for _ in range(25)])
+        check = self._named(preflight.run(self.config), "Record is current")
+        self.assertFalse(check.passed)
+        self.assertIn("market that has moved on", check.detail)
+
+    def test_a_current_record_passes(self):
+        from datetime import datetime, timedelta, timezone
+        today = datetime.now(tz=timezone.utc)
+        start = (today - timedelta(days=40)).strftime("%Y-%m-%d")
+        end = today.strftime("%Y-%m-%d")
+        paper_csv(self.config.live.trades_file, [(start, end, 1.0) for _ in range(25)])
+        checks = preflight.run(self.config)
+        self.assertTrue(self._named(checks, "Record is current").passed)
+        self.assertTrue(self._named(checks, "Paper trading").passed)
+
     def test_the_report_names_every_blocking_issue(self):
         text = preflight.render(preflight.run(self.config, backtest_verdict=(False, "no")))
         self.assertIn("Do not trade real money", text)

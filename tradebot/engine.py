@@ -47,6 +47,12 @@ class ExecutionSettings:
     empty a small account on costs alone. Refusing to pay more than a tenth of the
     moved notional to move it breaks the cycle.
 
+    ``max_consecutive_rejections`` halts trading after the venue refuses this many
+    orders in a row. Without it a persistently rejected order - wrong symbol, too
+    small, insufficient funds, expired key - is retried on every single bar forever,
+    hammering the API unattended and never getting anywhere. A rejection that repeats
+    is a condition a human needs to look at, not one to retry into.
+
     Opening and closing are never blocked by either setting - only resizing.
     """
 
@@ -54,6 +60,7 @@ class ExecutionSettings:
     min_notional: float = 10.0
     rebalance_threshold: float = 0.005
     max_resize_cost_share: float = 0.10
+    max_consecutive_rejections: int = 5
 
     def round_qty(self, qty: float) -> float:
         """Round down to the venue's lot size, so an order is never larger than intended."""
@@ -76,6 +83,7 @@ class Engine:
     active_stop: float | None = None
     active_target: float | None = None
     bars_seen: int = 0
+    consecutive_rejections: int = 0
 
     _log: list[str] = field(default_factory=list)
 
@@ -242,11 +250,19 @@ class Engine:
         try:
             fill = self.broker.execute(ts, signed_qty, reference_price, reason)
         except BrokerError as exc:
-            self._record(ts, f"order rejected: {exc}")
+            self.consecutive_rejections += 1
+            self._record(ts, f"order rejected ({self.consecutive_rejections}): {exc}")
+            limit = self.execution.max_consecutive_rejections
+            if limit > 0 and self.consecutive_rejections >= limit:
+                self.risk.halted_reason = "repeated order rejections"
+                self._record(ts, f"halting after {self.consecutive_rejections} rejections in a row")
             return None
         if fill is None:
+            # Not a rejection: a dry run, or a size that rounded away. Nothing was
+            # refused, so the rejection count is left alone.
             return None
 
+        self.consecutive_rejections = 0
         for trade in self.portfolio.apply(fill):
             self.risk.record_trade_result(trade.net_pnl)
         return fill
@@ -273,6 +289,7 @@ class Engine:
             "active_stop": self.active_stop,
             "active_target": self.active_target,
             "bars_seen": self.bars_seen,
+            "consecutive_rejections": self.consecutive_rejections,
         }
 
     def restore(self, state: dict) -> None:
@@ -281,3 +298,4 @@ class Engine:
         self.active_stop = state.get("active_stop")
         self.active_target = state.get("active_target")
         self.bars_seen = int(state.get("bars_seen", 0))
+        self.consecutive_rejections = int(state.get("consecutive_rejections", 0))

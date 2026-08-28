@@ -310,6 +310,119 @@ class TestTrailingStop(unittest.TestCase):
         self.assertLess(strategy._trail, high_stop, "a new position must not inherit the old stop")
 
 
+class TestRejectionHandling(unittest.TestCase):
+    """A rejected order that keeps being rejected must not be retried forever."""
+
+    def _rejecting_engine(self, error_after=0, limit=3):
+        from tradebot.brokers.base import Broker, BrokerError
+
+        class Rejecting(Broker):
+            is_live = True
+
+            def __init__(self):
+                self.calls = 0
+
+            def execute(self, ts, signed_qty, reference_price, reason):
+                self.calls += 1
+                raise BrokerError("insufficient funds")
+
+        broker = Rejecting()
+        costs = CostModel(taker_fee_bps=0, maker_fee_bps=0, half_spread_bps=0, slippage_bps=0)
+        portfolio = Portfolio(starting_cash=1000.0)
+        risk = RiskManager(
+            limits=RiskLimits(max_position_pct=1.0, min_trade_notional=0.0,
+                              max_trades_per_day=10_000, max_daily_loss_pct=0.99,
+                              max_drawdown_pct=0.99),
+            costs=costs,
+        )
+        engine = Engine(
+            strategy=Scripted([Decision(1.0)] * 30), portfolio=portfolio, risk=risk,
+            costs=costs, broker=broker,
+            execution=ExecutionSettings(min_notional=0.0, max_consecutive_rejections=limit),
+        )
+        return engine, portfolio, risk, broker
+
+    def test_repeated_rejections_halt_trading(self):
+        engine, _, risk, broker = self._rejecting_engine(limit=3)
+        for i in range(1, 12):
+            engine.process(candle(i, 100, 100, 100, 100))
+
+        self.assertEqual(risk.halted_reason, "repeated order rejections")
+        self.assertLessEqual(broker.calls, 4, "must stop retrying, not hammer the venue")
+
+    def test_a_dry_run_returning_none_is_not_a_rejection(self):
+        """Dry-run withholds every order; that must never trip the rejection halt."""
+        from tradebot.brokers.base import Broker
+
+        class Withholding(Broker):
+            is_live = True
+
+            def execute(self, ts, signed_qty, reference_price, reason):
+                return None
+
+        costs = CostModel(taker_fee_bps=0, maker_fee_bps=0, half_spread_bps=0, slippage_bps=0)
+        portfolio = Portfolio(starting_cash=1000.0)
+        risk = RiskManager(
+            limits=RiskLimits(max_position_pct=1.0, min_trade_notional=0.0,
+                              max_trades_per_day=10_000), costs=costs)
+        engine = Engine(
+            strategy=Scripted([Decision(1.0)] * 30), portfolio=portfolio, risk=risk,
+            costs=costs, broker=Withholding(),
+            execution=ExecutionSettings(min_notional=0.0, max_consecutive_rejections=3),
+        )
+        for i in range(1, 12):
+            engine.process(candle(i, 100, 100, 100, 100))
+
+        self.assertIsNone(risk.halted_reason)
+        self.assertEqual(engine.consecutive_rejections, 0)
+
+    def test_a_successful_fill_resets_the_count(self):
+        from tradebot.brokers.base import Broker, BrokerError
+        from tradebot.brokers.paper import PaperBroker
+
+        costs = CostModel(taker_fee_bps=0, maker_fee_bps=0, half_spread_bps=0, slippage_bps=0)
+
+        class Flaky(Broker):
+            is_live = True
+
+            def __init__(self):
+                self.n = 0
+                self.paper = PaperBroker(costs)
+
+            def execute(self, ts, signed_qty, reference_price, reason):
+                self.n += 1
+                if self.n <= 2:
+                    raise BrokerError("temporary")
+                return self.paper.execute(ts, signed_qty, reference_price, reason)
+
+        portfolio = Portfolio(starting_cash=1000.0)
+        risk = RiskManager(
+            limits=RiskLimits(max_position_pct=1.0, min_trade_notional=0.0,
+                              max_trades_per_day=10_000), costs=costs)
+        engine = Engine(
+            strategy=Scripted([Decision(1.0)] * 30), portfolio=portfolio, risk=risk,
+            costs=costs, broker=Flaky(),
+            execution=ExecutionSettings(min_notional=0.0, max_consecutive_rejections=5),
+        )
+        for i in range(1, 8):
+            engine.process(candle(i, 100, 100, 100, 100))
+
+        self.assertEqual(engine.consecutive_rejections, 0, "a fill clears the streak")
+        self.assertIsNone(risk.halted_reason)
+        self.assertFalse(portfolio.is_flat)
+
+    def test_the_rejection_count_survives_a_restart(self):
+        engine, _, _, _ = self._rejecting_engine(limit=10)
+        for i in range(1, 4):
+            engine.process(candle(i, 100, 100, 100, 100))
+        saved = engine.state()
+        self.assertGreater(saved["consecutive_rejections"], 0)
+
+        fresh, _, _, _ = self._rejecting_engine(limit=10)
+        fresh.restore(saved)
+        self.assertEqual(fresh.consecutive_rejections, saved["consecutive_rejections"])
+
+
 class TestHaltBehaviour(unittest.TestCase):
     def test_a_halt_closes_an_open_position_rather_than_freezing_it(self):
         """Stopping trading must also mean stopping exposure."""

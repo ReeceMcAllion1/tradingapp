@@ -169,6 +169,10 @@ class TestLiveRunner(unittest.TestCase):
     def _runner(self, tmpdir, candles):
         config = Config()
         config.live.state_file = str(Path(tmpdir) / "state.json")
+        # Must be redirected too. Left at its default this writes fabricated trades
+        # into the real state/trades.csv, which is the file preflight reads to decide
+        # whether enough paper trading has happened to risk real money.
+        config.live.trades_file = str(Path(tmpdir) / "trades.csv")
         config.account.starting_cash = 1000.0
         config.risk = RiskLimits(max_position_pct=0.5, max_trades_per_day=1000)
         return LiveRunner(
@@ -177,6 +181,16 @@ class TestLiveRunner(unittest.TestCase):
             feed=StubFeed(candles),
             broker=PaperBroker(config.costs),
         )
+
+    def test_the_runner_never_writes_to_the_real_state_directory(self):
+        """Regression: a test run must not fabricate live paper-trading history."""
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self._runner(tmp, SyntheticFeed(bars=50, seed=1).generate())
+            for path in (runner.config.live.state_file, runner.config.live.trades_file):
+                self.assertTrue(
+                    path.startswith(tmp),
+                    f"{path} escapes the temp directory and would pollute the real record",
+                )
 
     def test_a_paper_session_runs_and_saves_state(self):
         candles = SyntheticFeed(bars=300, seed=1).generate()
