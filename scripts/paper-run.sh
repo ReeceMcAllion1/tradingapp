@@ -23,6 +23,15 @@ CONFIG_DIR="${TRADEBOT_CONFIGS:-configs}"
 RUN_DIR="${TRADEBOT_RUN:-state}"
 PYTHON="${PYTHON:-python3}"
 
+# Fail early and legibly. tomllib arrived in 3.11, so an older interpreter dies deep
+# inside a config import with a message that says nothing about the real problem.
+if ! "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+  echo "tradebot needs Python 3.11 or newer (for tomllib)." >&2
+  echo "Found: $("$PYTHON" --version 2>&1 || echo "no $PYTHON on PATH")" >&2
+  echo "Set PYTHON=/path/to/python3.11 if you have one installed elsewhere." >&2
+  exit 1
+fi
+
 mkdir -p "$RUN_DIR"
 
 configs() {

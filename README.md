@@ -7,7 +7,16 @@ about what automated trading actually is.
 **Start here:**
 
 ```bash
-python3 -m tradebot demo
+python3 -m tradebot demo          # why a few-pence profit target loses money
+```
+
+**To run it for days or weeks** (paper money, no API keys, no orders placed):
+
+```bash
+./scripts/paper-run.sh start      # three strategies incl. a buy-and-hold benchmark
+./scripts/paper-run.sh status     # check on it any time
+./scripts/paper-run.sh report     # the verdict, benchmarked against holding
+./scripts/paper-run.sh stop
 ```
 
 No dependencies, no install. Python 3.11 or newer.
