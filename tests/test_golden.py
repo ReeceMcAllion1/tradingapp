@@ -26,12 +26,12 @@ from tradebot.strategies import available, build
 
 #: strategy -> (ending equity, trades, total costs), on seed 1234 over 3,000 bars.
 GOLDEN = {
-    "buy_and_hold": (10749.294479, 1, 21.809486),
-    "ema_cross": (8435.800025, 72, 1380.240863),
-    "mean_reversion": (9363.944150, 49, 1012.764515),
-    "micro_scalp": (3419.045378, 545, 7161.139381),
-    "never_lose": (9450.993041, 71, 1492.802718),
-    "slow_trend": (10493.075195, 2, 43.556276),
+    "buy_and_hold": (10748.508376, 1, 21.786605),
+    "ema_cross": (8437.317917, 72, 1378.924092),
+    "mean_reversion": (9364.598766, 49, 1011.719439),
+    "micro_scalp": (3422.909976, 545, 7156.845706),
+    "never_lose": (9451.569847, 71, 1491.235733),
+    "slow_trend": (10492.556940, 2, 43.509538),
 }
 
 

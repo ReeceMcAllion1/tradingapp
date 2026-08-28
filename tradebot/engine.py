@@ -27,7 +27,7 @@ from .costs import CostModel
 from .portfolio import Portfolio
 from .risk import RiskManager
 from .strategies.base import Context, Strategy
-from .types import Candle, Decision, Fill
+from .types import Candle, Decision, Fill, Side
 
 
 @dataclass
@@ -193,6 +193,8 @@ class Engine:
 
         target_qty = (target * equity) / price
         delta = target_qty - self.portfolio.qty
+        if delta > 0:
+            delta = min(delta, self._affordable(price))
         delta = self.execution.round_qty(delta)
 
         if abs(delta) < 1e-12 or abs(delta * price) < self.execution.min_notional:
@@ -227,6 +229,28 @@ class Engine:
             (self.costs.half_spread_bps + self.costs.slippage_bps) * 1e-4
         )
         return one_way_cost <= moved * self.execution.max_resize_cost_share
+
+    def _affordable(self, reference_price: float) -> float:
+        """Largest quantity the cash on hand can actually pay for.
+
+        Sizing a position at 100% of *equity* and then charging the fee spends money
+        that is not there: cash goes slightly negative, and the account is quietly
+        running a small unfunded overdraft. It is only a fraction of a percent, but it
+        is money the simulation invented, and it compounds into two visible wrongs -
+        measured exposure that sits permanently above its target, and equity that can
+        go negative on a long position, which is impossible without leverage.
+
+        Budgeting from cash, net of the fill's own costs, removes the cause rather
+        than the symptoms.
+        """
+        cash = self.portfolio.cash
+        if cash <= 0 or reference_price <= 0:
+            return 0.0
+        fill_price = self.costs.fill_price(Side.BUY, reference_price)
+        per_unit = fill_price * (1.0 + self.costs.taker_fee_bps * 1e-4)
+        if per_unit <= 0:
+            return 0.0
+        return max(0.0, (cash - self.costs.flat_fee) / per_unit)
 
     def close_position(self, price: float, ts: int, reason: str) -> list[Fill]:
         if self.portfolio.is_flat:

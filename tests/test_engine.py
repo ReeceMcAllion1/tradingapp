@@ -423,6 +423,56 @@ class TestRejectionHandling(unittest.TestCase):
         self.assertEqual(fresh.consecutive_rejections, saved["consecutive_rejections"])
 
 
+class TestCashSolvency(unittest.TestCase):
+    """You cannot spend money you do not have, and a long cannot go below zero."""
+
+    def _engine(self, cash=1000.0, costs=None):
+        costs = costs or CostModel(taker_fee_bps=10, maker_fee_bps=10,
+                                   half_spread_bps=2, slippage_bps=2)
+        portfolio = Portfolio(starting_cash=cash)
+        risk = RiskManager(
+            limits=RiskLimits(max_position_pct=1.0, min_trade_notional=0.0,
+                              max_trades_per_day=10_000, max_daily_loss_pct=0.99,
+                              max_drawdown_pct=0.99),
+            costs=costs,
+        )
+        engine = Engine(
+            strategy=Scripted([Decision(1.0)] * 20), portfolio=portfolio, risk=risk,
+            costs=costs, execution=ExecutionSettings(min_notional=0.0),
+        )
+        return engine, portfolio
+
+    def test_a_full_size_buy_leaves_cash_at_zero_not_below(self):
+        engine, portfolio = self._engine()
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 100, 100, 100))
+        self.assertGreaterEqual(portfolio.cash, -1e-6,
+                                "sizing on equity then charging the fee is an overdraft")
+
+    def test_measured_exposure_lands_on_its_target(self):
+        """The drift that forced hold_weight and the rebalance threshold came from this."""
+        engine, portfolio = self._engine()
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 100, 100, 100))
+        self.assertAlmostEqual(portfolio.exposure(100.0), 1.0, places=6)
+
+    def test_a_long_cannot_end_with_negative_equity(self):
+        """Unleveraged, the worst case is losing everything - not owing money."""
+        engine, portfolio = self._engine()
+        for i in range(1, 4):
+            engine.process(candle(i, 100, 100, 100, 100))
+        engine.process(candle(4, 0.01, 0.01, 0.01, 0.01))
+        self.assertGreaterEqual(portfolio.equity(0.01), 0.0)
+
+    def test_a_flat_fee_is_budgeted_for_too(self):
+        costs = CostModel(taker_fee_bps=0, maker_fee_bps=0, half_spread_bps=0,
+                          slippage_bps=0, flat_fee=25.0)
+        engine, portfolio = self._engine(cash=1000.0, costs=costs)
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 100, 100, 100))
+        self.assertGreaterEqual(portfolio.cash, -1e-6)
+
+
 class TestHaltBehaviour(unittest.TestCase):
     def test_a_halt_closes_an_open_position_rather_than_freezing_it(self):
         """Stopping trading must also mean stopping exposure."""
