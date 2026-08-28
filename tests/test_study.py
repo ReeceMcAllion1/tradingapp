@@ -433,3 +433,57 @@ class TestDrawdownIsActuallyMeasured(unittest.TestCase):
         self.assertGreater(metrics.max_drawdown_pct, 50.0,
                            "holding through a 60% fall must report a large drawdown")
         self.assertIn("Max drawdown", metrics.render())
+
+
+class TestSharpeIsActuallyComputed(unittest.TestCase):
+    """The other figure that could be hard-wired to zero unnoticed.
+
+    Sharpe sits in the study's comparison table next to CAGR and drawdown, so a
+    silently dead one would make every strategy look equally risk-adjusted.
+    """
+
+    def sharpe(self, equities, bar_ms=86_400_000):
+        from tradebot.metrics import _sharpe
+        from tradebot.types import EquityPoint
+
+        return _sharpe([
+            EquityPoint(ts=i * bar_ms, equity=e, price=e, position=0.0, cash=e)
+            for i, e in enumerate(map(float, equities))
+        ])
+
+    def test_a_steadily_rising_curve_scores_positive(self):
+        rising = [100.0 * 1.01**i for i in range(60)]
+        # A perfectly smooth curve has near-zero variance; nudge it so stdev is real.
+        rising = [e * (1.0 + 0.002 * (-1) ** i) for i, e in enumerate(rising)]
+        self.assertGreater(self.sharpe(rising), 0.0)
+
+    def test_a_falling_curve_scores_negative(self):
+        falling = [100.0 * 0.99**i for i in range(60)]
+        falling = [e * (1.0 + 0.002 * (-1) ** i) for i, e in enumerate(falling)]
+        self.assertLess(self.sharpe(falling), 0.0)
+
+    def test_a_flat_curve_has_no_ratio_to_report(self):
+        self.assertAlmostEqual(self.sharpe([100.0] * 60), 0.0)
+
+    def test_a_smoother_path_to_the_same_place_scores_higher(self):
+        """The whole point of the ratio: same return, less turbulence, better score."""
+        smooth = [100.0 * 1.01**i * (1.0 + 0.002 * (-1) ** i) for i in range(60)]
+        rough = [100.0 * 1.01**i * (1.0 + 0.05 * (-1) ** i) for i in range(60)]
+        self.assertGreater(self.sharpe(smooth), self.sharpe(rough))
+
+    def test_too_few_points_report_nothing_rather_than_guessing(self):
+        self.assertAlmostEqual(self.sharpe([100.0, 101.0]), 0.0)
+
+    def test_a_real_backtest_reports_a_nonzero_ratio(self):
+        from tradebot.strategies import build
+
+        candles = SyntheticFeed(bars=800, seed=9, interval_ms=86_400_000).generate()
+        metrics = run_backtest(
+            candles, build("buy_and_hold"), starting_cash=1000.0,
+            limits=RiskLimits(max_position_pct=1.0, max_daily_loss_pct=0.99,
+                              max_drawdown_pct=0.99, max_trades_per_day=1000,
+                              min_trade_notional=1.0, cooldown_bars_after_loss=0),
+            execution=ExecutionSettings(min_notional=1.0),
+        ).metrics
+        self.assertTrue(metrics.can_annualise)
+        self.assertNotAlmostEqual(metrics.sharpe, 0.0, places=6)
