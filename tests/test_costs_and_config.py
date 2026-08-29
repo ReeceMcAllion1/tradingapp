@@ -242,3 +242,63 @@ class TestLotSizeAlignment(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPathsExpandWithoutAShell(unittest.TestCase):
+    """Globs must be expanded by the program, not by the shell.
+
+    Unix shells turn `configs/*.toml` into a list before the program starts. The Windows
+    command prompt hands the asterisk over untouched, so a command copied straight from
+    the README worked on one machine and died on another with a stack trace about a file
+    literally named `*.toml`. Expanding here makes one documented command line behave
+    the same everywhere.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        for name in ("alpha.toml", "beta.toml", "notes.txt"):
+            (self.tmp / name).write_text("", encoding="utf-8")
+
+    def test_an_unexpanded_glob_is_expanded(self):
+        from tradebot.cli import expand_paths
+
+        found = expand_paths([str(self.tmp / "*.toml")])
+        self.assertEqual([Path(p).name for p in found], ["alpha.toml", "beta.toml"])
+
+    def test_already_expanded_arguments_pass_straight_through(self):
+        """A Unix shell has already done the work; doing it twice must be harmless."""
+        from tradebot.cli import expand_paths
+
+        given = [str(self.tmp / "alpha.toml"), str(self.tmp / "beta.toml")]
+        self.assertEqual(expand_paths(given), given)
+
+    def test_duplicates_are_collapsed(self):
+        from tradebot.cli import expand_paths
+
+        one = str(self.tmp / "alpha.toml")
+        self.assertEqual(expand_paths([one, one, str(self.tmp / "*.toml")]),
+                         [one, str(self.tmp / "beta.toml")])
+
+    def test_directories_are_not_mistaken_for_files(self):
+        from tradebot.cli import expand_paths
+
+        (self.tmp / "sub.toml").mkdir()
+        found = expand_paths([str(self.tmp / "*.toml")])
+        self.assertNotIn("sub.toml", [Path(p).name for p in found])
+
+    def test_matching_nothing_says_so_instead_of_crashing(self):
+        from tradebot.cli import expand_paths
+
+        with self.assertRaises(SystemExit) as caught:
+            expand_paths([str(self.tmp / "*.nope")])
+        self.assertIn("no file matched", str(caught.exception))
+
+    def test_the_message_points_at_the_usual_cause(self):
+        """Being in the wrong directory is what this is nearly always telling you."""
+        from tradebot.cli import expand_paths
+
+        with self.assertRaises(SystemExit) as caught:
+            expand_paths([str(self.tmp / "no-such-place" / "*.toml")], "config")
+        message = str(caught.exception)
+        self.assertIn("no config matched", message)
+        self.assertIn("project folder", message)

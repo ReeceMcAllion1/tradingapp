@@ -422,13 +422,43 @@ def _params_from(specs: list[str]) -> dict:
     return out
 
 
+def expand_paths(patterns: list[str], what: str = "file") -> list[str]:
+    """Turn arguments into real file paths, expanding any globs ourselves.
+
+    Unix shells expand ``configs/*.toml`` before the program ever sees it. The Windows
+    command prompt does not - it hands the asterisk over untouched - so a command copied
+    from a README worked on one machine and died on another with a stack trace about a
+    file literally named ``*.toml``. Expanding here means one documented command line
+    behaves the same everywhere.
+
+    Already-expanded arguments pass through untouched, so this is safe on both.
+    """
+    from glob import glob
+
+    found: list[str] = []
+    for pattern in patterns:
+        matches = sorted(glob(pattern))
+        if matches:
+            found += [m for m in matches if Path(m).is_file()]
+        elif Path(pattern).is_file():
+            found.append(pattern)
+
+    seen: list[str] = []
+    for path in found:
+        if path not in seen:
+            seen.append(path)
+    if not seen:
+        raise SystemExit(
+            f"no {what} matched: {' '.join(patterns)}\n"
+            f"  Check you are in the project folder - on Windows, 'cd' to it first."
+        )
+    return seen
+
+
 def _series_from(patterns: list[str]) -> dict:
     from glob import glob
 
-    paths = sorted(set(sum((glob(p) for p in patterns), [])))
-    if not paths:
-        raise SystemExit(f"no files matched: {' '.join(patterns)}")
-    return study_mod.load_files(paths)
+    return study_mod.load_files(expand_paths(patterns, "bar file"))
 
 
 def _sweep_context(args):
@@ -656,7 +686,8 @@ def cmd_status(args) -> int:
 
 def cmd_report(args) -> int:
     """Summarise finished or running sessions, against what holding would have done."""
-    configs = args.configs or ([args.config] if args.config else [])
+    configs = expand_paths(args.configs, "config") if args.configs else (
+        [args.config] if args.config else [])
     if not configs:
         raise SystemExit("give one or more config files, e.g. report state/*.toml")
 
@@ -727,7 +758,8 @@ def cmd_dashboard(args) -> int:
     """Serve a local page showing what every session is doing, refreshing itself."""
     import webbrowser
 
-    configs = args.configs or ([args.config] if args.config else [])
+    configs = expand_paths(args.configs, "config") if args.configs else (
+        [args.config] if args.config else [])
     if not configs:
         raise SystemExit("give one or more config files, e.g. dashboard configs/*.toml")
 

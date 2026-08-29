@@ -7,6 +7,28 @@ here: every session started during development died with the machine it ran on.
 A live run needs somewhere that stays on. That means your machine, and these are the
 commands.
 
+## Windows: the short version
+
+Everything below assumes a Unix shell. On Windows the command is `py`, not `python3`,
+`cmd` does not expand `*` for you (the program does it instead), and the `.sh` scripts
+will not run — use `scripts\paper-run.bat`.
+
+```bat
+cd %USERPROFILE%
+git clone https://github.com/ReeceMcAllion1/tradingapp.git
+cd tradingapp
+git checkout claude/automated-trading-system-23jrwc
+
+py -m unittest discover -s tests -t .     :: check it works
+scripts\paper-run.bat start               :: start paper trading
+scripts\paper-run.bat watch               :: open the dashboard
+scripts\paper-run.bat stop                :: stop everything
+```
+
+No git? Download the branch as a ZIP from GitHub — the green **Code** button, then
+**Download ZIP** — unzip it, and `cd` into the unzipped folder before running anything.
+`No module named tradebot` always means you are in the wrong folder.
+
 ## What you need
 
 Python 3.11 or newer. Nothing else — no packages to install, no API keys, no account.
