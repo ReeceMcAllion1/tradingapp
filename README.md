@@ -441,6 +441,18 @@ a 401 indistinguishable from an expired key. It proves the implementation matche
 venue's published algorithm; it does not prove the algorithm is current, and none of it
 has been checked against a funded account.
 
+`./scripts/mutation-sweep.sh` asks the harder question: would these tests fail if the
+code were wrong? It breaks the package on purpose, 35 times — a cost that stops being
+charged, a limit that stops binding, a validator that stops validating — and checks the
+suite rejects each one. Every mutation is currently caught. It is worth running after
+any change to the engine, the cost model or the analysis modules, because a test that
+cannot fail is worse than no test: it reads like coverage.
+
+Two of the gaps it found were the reason it exists. Walk-forward validation could be
+pointed at its own training segment, and the parameter sweep's mean could report its
+best cell. Both would have turned the analysis every honest number below depends on
+into a flattering one, silently, with the suite green.
+
 ---
 
 ## Running it for days or weeks
