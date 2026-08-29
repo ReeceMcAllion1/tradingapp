@@ -244,6 +244,25 @@ mutate tradebot/feeds/base.py \
     'out-of-order bars are fed to the strategy'
 
 echo
+echo "  Diversification"
+mutate tradebot/basket.py \
+    'common = set.intersection(*(set(c.ts for c in bars) for bars in series.values()))' \
+    'common = set.union(*(set(c.ts for c in bars) for bars in series.values()))' \
+    'members get measured over different windows'
+mutate tradebot/basket.py \
+    'per_sleeve = starting_cash / len(names)' \
+    'per_sleeve = starting_cash' \
+    'every sleeve gets the full capital, inflating the basket'
+mutate tradebot/basket.py \
+    'equity=sum(c[i].equity for c in curves),' \
+    'equity=curves[0][i].equity * len(curves),' \
+    'the portfolio curve stops being the sum of its parts'
+mutate tradebot/basket.py \
+    'bucket[2] = min(bucket[2], candle.low)' \
+    'bucket[2] = candle.low' \
+    'the daily roll-up loses the true low'
+
+echo
 echo "  Preflight"
 mutate tradebot/preflight.py \
     'if rows and net <= 0:' 'if False:' \

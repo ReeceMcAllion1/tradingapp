@@ -452,6 +452,77 @@ in a liquid market and are patient; it is not defensible as a default, because t
 number that makes it look good is an assumption about the order book rather than a
 measurement of one. Live fills would settle it, and nothing short of live fills will.
 
+---
+
+## Diversification: the only free lunch, and what it is actually worth
+
+Every conclusion above is about **one instrument**, because until now the system could
+only hold one. That is a real limitation: refusing to put everything in one place is
+the one improvement in finance that requires predicting nothing at all.
+
+```bash
+python3 -m tradebot basket --files "data/*_10y_1d.csv" --strategy vol_target --correlations
+```
+
+Capital is split equally, each market runs its own engine and books, and the curves are
+summed. Nothing is rebalanced between them, because rebalancing means selling a winner
+to buy a loser and paying on both legs — and this repository is a ten-year argument
+about what fees do to returns.
+
+### It works, but not on what you would guess
+
+The first basket tried was ten US stocks. Its worst drawdown came out at **38.7%**,
+*worse* than the 33.7% of simply holding SPY, at a lower Sharpe. Ten US stocks are not
+ten bets — they are one bet on the US market with added single-name risk, and SPY is
+already five hundred of them. **Diversification needs assets that move differently, not
+merely assets that are numerous.** `--correlations` exists so that can be checked rather
+than assumed; on that basket the average pairwise correlation was 0.39.
+
+Where it does work is rescuing bad holdings. Over the same ten years:
+
+| held, on the identical window | return | worst fall | Sharpe |
+|---|---|---|---|
+| GE alone | +154.4% | 80.9% | 0.44 |
+| F alone | +89.2% | 64.8% | 0.36 |
+| BA alone | +70.9% | 77.9% | 0.34 |
+| **the 9-stock basket** | **+350.1%** | **38.7%** | **0.83** |
+
+Half the drawdown of its worst members and more return than any of them. That is the
+free lunch, and it is real — it just cannot beat an index that already ate it.
+
+Adding crypto to a stock basket is the textbook move, and it made things **worse**:
+stock-to-crypto correlation was a genuinely low 0.15, but Bitcoin returned 20.9% at a
+53% drawdown over the shared window, and low correlation cannot rescue a poor asset.
+Sharpe fell from 1.46 (stocks alone) to 1.00 (stocks plus Bitcoin).
+
+### The one thing in this repository that beats the index
+
+Volatility targeting on the diversified basket, split at the halfway point so both
+halves are reported:
+
+| | 2016–2021 | 2021–2026 |
+|---|---|---|
+| hold SPY — Sharpe | 0.96 | 0.79 |
+| hold the 9-stock basket — Sharpe | 0.87 | 1.05 |
+| **vol_target on the basket — Sharpe** | **1.26** | **0.99** |
+| vol_target worst fall | **10.8%** | **8.7%** |
+| SPY worst fall | 33.7% | 24.5% |
+
+**Better Sharpe than SPY in both halves, at roughly a third of the drawdown.** That is
+the first risk-adjusted win in this project against the benchmark that has beaten
+everything else in it.
+
+Read the rest of the row before celebrating. Returns were **+51.6% and +31.1%** against
+SPY's +124.7% and +83.5%. The strategy holds well under a full position, so it earns
+less; what it buys with that is a much smaller worst case. Converting a Sharpe edge into
+more money requires leverage to bring the risk back up, and this system does not permit
+leverage and should not. Against the equal-weight basket rather than SPY it is ahead in
+one half and slightly behind in the other — a coin flip, honestly reported.
+
+So the standing conclusion holds, with one amendment: **diversify first, then size by
+risk.** Together they produce the best risk-adjusted portfolio here by a clear margin.
+Neither produces more money than holding the index, and nothing in this repository does.
+
 ## Seeing the trades
 
 Every number above can be checked, trade by trade:
@@ -523,6 +594,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `tradelog.py` | The trade log: terminal table, CSV export, live append |
 | `sweep.py` | Parameter grids, so a lucky cell cannot pass as a finding |
 | `walkforward.py` | Out-of-sample validation: the check on every other number here |
+| `basket.py` | Several markets held as one portfolio, and what actually correlates |
 | `report.py` | End-of-run verdict, benchmarked against holding over the same window |
 | `preflight.py` | Readiness checks that must pass before risking real money |
 | `live.py` | The unattended runner, with state that survives restarts |
@@ -530,7 +602,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Seven: a benchmark, two that fail instructively, and two that insure |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 367, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 387, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
 every strategy's end-to-end result to the penny, so a change to fill pricing or bracket
@@ -546,7 +618,7 @@ venue's published algorithm; it does not prove the algorithm is current, and non
 has been checked against a funded account.
 
 `./scripts/mutation-sweep.sh` asks the harder question: would these tests fail if the
-code were wrong? It breaks the package on purpose, 42 times — a cost that stops being
+code were wrong? It breaks the package on purpose, 46 times — a cost that stops being
 charged, a limit that stops binding, a validator that stops validating — and checks the
 suite rejects each one. Every mutation is currently caught. It is worth running after
 any change to the engine, the cost model or the analysis modules, because a test that

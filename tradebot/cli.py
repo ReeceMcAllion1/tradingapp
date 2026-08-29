@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from . import backtest as backtest_mod
+from . import basket as basket_mod
 from . import config as config_mod
 from . import preflight as preflight_mod
 from . import report as report_mod
@@ -343,6 +344,43 @@ def _grid_from(specs: list[str]) -> dict[str, list]:
     if not grid:
         raise SystemExit("give at least one --param name=v1,v2,v3")
     return grid
+
+
+def cmd_basket(args) -> int:
+    """Run one strategy across several markets at once, held as a portfolio."""
+    series = _series_from(args.files)
+    if args.daily:
+        series = {name: basket_mod.to_daily(bars) for name, bars in series.items()}
+
+    if args.correlations:
+        pairs = basket_mod.correlation(series)
+        print("\n  Daily return correlation - low numbers are what diversify")
+        print("  " + "-" * 52)
+        for (a, b), value in sorted(pairs.items(), key=lambda kv: kv[1]):
+            print(f"  {a:>12} vs {b:<12} {value:>7.2f}")
+        average = sum(pairs.values()) / len(pairs) if pairs else 0.0
+        print(f"\n  average pairwise correlation: {average:.2f}")
+        print("  Near 1.0 means these are one holding wearing several names, and a")
+        print("  basket of them diversifies nothing while paying several sets of fees.\n")
+
+    result = basket_mod.run(
+        series, args.strategy, _params_from(args.param), **_sweep_context(args)
+    )
+    print(basket_mod.render(result, currency=""))
+    return 0
+
+
+def _params_from(specs: list[str]) -> dict:
+    out: dict = {}
+    for spec in specs or []:
+        if "=" not in spec:
+            raise SystemExit(f"parameter needs name=value, got {spec!r}")
+        name, raw = spec.split("=", 1)
+        try:
+            out[name] = int(raw) if raw.isdigit() else float(raw)
+        except ValueError:
+            out[name] = raw
+    return out
 
 
 def _series_from(patterns: list[str]) -> dict:
@@ -773,6 +811,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--spread-bps", type=float, default=1.0)
     p.add_argument("--slippage-bps", type=float, default=2.0)
     p.set_defaults(func=cmd_sweep)
+
+    p = sub.add_parser("basket", help="run one strategy across several markets as a portfolio")
+    p.add_argument("--files", nargs="+", metavar="CSV", required=True,
+                   help="bar files, globs allowed - one per market")
+    p.add_argument("--strategy", default="vol_target")
+    p.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
+    p.add_argument("--daily", action="store_true",
+                   help="roll finer bars up to one a day, so markets on different clocks line up")
+    p.add_argument("--correlations", action="store_true",
+                   help="show what actually correlates before trusting the basket")
+    p.add_argument("--cash", type=float, default=10_000.0, help="total capital, split equally")
+    p.add_argument("--fee-bps", type=float, default=7.5, help="commission in basis points")
+    p.add_argument("--spread-bps", type=float, default=1.0, help="half-spread in basis points")
+    p.add_argument("--slippage-bps", type=float, default=2.0)
+    p.set_defaults(func=cmd_basket)
 
     p = sub.add_parser("walkforward", help="choose parameters on past data, test on unseen data")
     p.add_argument("-s", "--strategy", required=True)
