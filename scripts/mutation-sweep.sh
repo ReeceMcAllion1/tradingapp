@@ -211,6 +211,18 @@ mutate tradebot/strategies/never_lose.py \
     'target = ctx.costs.net_breakeven_exit(ctx.avg_price, qty)' \
     'target = ctx.avg_price' \
     'never_lose exits at the entry price, a guaranteed loss'
+mutate tradebot/strategies/vol_target.py \
+    'weight = min(self.max_weight, self.target_vol / annualised)' \
+    'weight = self.max_weight' \
+    'volatility sizing stops sizing by volatility'
+mutate tradebot/strategies/vol_target.py \
+    'rungs = math.floor(weight / self.step)' \
+    'rungs = weight / self.step' \
+    'the position stops being quantised, and chases noise'
+mutate tradebot/strategies/vol_target.py \
+    'annualised = stdev * math.sqrt(self._bars_per_year)' \
+    'annualised = stdev' \
+    'volatility is not annualised, so the target means nothing'
 mutate tradebot/feeds/base.py \
     'ordered = sorted(candles, key=lambda c: c.ts)' 'ordered = candles' \
     'out-of-order bars are fed to the strategy'

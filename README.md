@@ -348,6 +348,70 @@ After a decade of stocks, 2.3 years of hourly crypto, 208 days of 15-minute cryp
 
 That is a genuinely useful answer, and it is not the one anybody wants.
 
+---
+
+## Acting on that answer: volatility targeting
+
+The finding above is a design instruction, not just a disappointment. Direction-timing
+did not transfer; sizing by risk was the thing that did. So the next strategy stops
+forecasting direction altogether.
+
+`vol_target` is always invested and only decides *how much*, from realised volatility:
+calmer than the risk target, hold a full position; wilder, hold less. It never predicts
+where price is going. The bet is on the one property of markets that genuinely
+persists — a turbulent week is followed by a turbulent week far more often than chance,
+while direction is not remotely so obliging.
+
+**Sixteen markets, ninety-six walk-forward folds.** Ten markets were used while
+developing it; six — GE, F, INTC, BA, FRCB and SOL — were held back and run once, at
+the end, with nothing changed afterwards. That distinction matters more than any number
+here, so both are reported:
+
+| | developed on (10 markets) | **held back (6 markets)** |
+|---|---|---|
+| median vs buy-and-hold | +0.7pp | **−4.6pp** |
+| folds beating buy-and-hold | 26 of 60 | **14 of 36** |
+| median drawdown cut | +9 points | **+24 points** |
+
+The holdout is worse than the development set, which is exactly what should happen and
+the reason for keeping one. **Take the holdout column as the result.**
+
+Against the previous best active strategy, on the same out-of-sample basis:
+
+| | `ema_cross` | `vol_target` |
+|---|---|---|
+| median vs holding | −17pp | **−4.6pp** |
+| median drawdown cut | +5 points | **+24 points** |
+| cost drag | 1.3%/year | **0.2%/year** |
+| max drawdown, 13 stocks | 53.7% | **27.6%** |
+
+Roughly a quarter of the return shortfall, five times the drawdown protection, a sixth
+of the costs. Against buy-and-hold over the same thirteen stocks it cuts the worst
+drawdown from **63.2% to 27.6%** — less than half — while giving up 0.45 points of CAGR
+and holding a Sharpe of 0.43 against holding's 0.47.
+
+### What that does and does not mean
+
+- **It still does not beat buy-and-hold on return.** Median −4.6pp out of sample. Every
+  honest reading of the table above says the same thing the rest of this file does.
+- **It is a much better risk trade than anything else here**, and the drawdown effect is
+  now enormous and universal: positive in all sixteen markets, +24 points median on
+  data chosen before the strategy was run on it.
+- **Sharpe is essentially unchanged.** Halving the drawdown while barely moving Sharpe
+  means the improvement is in the tails, not in ordinary week-to-week returns. If what
+  you care about is the size of the worst year, that is the whole point; if you want a
+  higher return per unit of wobble, this does not deliver one.
+- **The comparison is unkind to it by construction.** It holds well under 100% on
+  average, so in a decade the market tripled it must return less. There is no fixing
+  that without leverage, which this system does not permit and should not.
+
+Adding the optional trend filter (`trend_period`) pushes drawdown protection further
+still — +21 to +35 points on the holdout — at a little more return. The same trade,
+priced the same way.
+
+The conclusion has not changed, it has sharpened: **this is insurance, and volatility
+targeting is a much better way to buy it than direction-timing was.**
+
 ## Seeing the trades
 
 Every number above can be checked, trade by trade:
@@ -424,9 +488,9 @@ python3 -m tradebot init-config    write a starter config.toml
 | `live.py` | The unattended runner, with state that survives restarts |
 | `brokers/` | Paper execution, and a hard-gated Crypto.com live adapter |
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
-| `strategies/` | Six strategies: a benchmark, two that fail instructively, and one that insures |
+| `strategies/` | Seven: a benchmark, two that fail instructively, and two that insure |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 320, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 338, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
 every strategy's end-to-end result to the penny, so a change to fill pricing or bracket
@@ -442,7 +506,7 @@ venue's published algorithm; it does not prove the algorithm is current, and non
 has been checked against a funded account.
 
 `./scripts/mutation-sweep.sh` asks the harder question: would these tests fail if the
-code were wrong? It breaks the package on purpose, 35 times — a cost that stops being
+code were wrong? It breaks the package on purpose, 38 times — a cost that stops being
 charged, a limit that stops binding, a validator that stops validating — and checks the
 suite rejects each one. Every mutation is currently caught. It is worth running after
 any change to the engine, the cost model or the analysis modules, because a test that
@@ -674,6 +738,13 @@ The honest path, in order:
 The largest edge available to you is not a better strategy. It is trading less,
 paying less, and not blowing up — which is exactly what the risk limits in this
 system are for, and exactly what the ten-year table above measures.
+
+The one improvement that measurably worked in this repository came from taking that
+seriously rather than from a cleverer signal. `vol_target` beat the previous best
+strategy by giving up on prediction entirely and sizing by risk instead — a quarter of
+the return shortfall, five times the drawdown protection, a sixth of the costs. It
+still loses to buy-and-hold. That is the shape of every real improvement you are
+likely to find here: less bad, not good.
 
 And if after all that the honest answer is that a low-cost index fund held for a
 decade beat everything here by 200 percentage points, that is a real answer worth

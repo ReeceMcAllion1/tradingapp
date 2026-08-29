@@ -11,6 +11,7 @@ from .micro_scalp import MicroScalp
 from .never_lose import NeverLose
 from .slow_trend import SlowTrend
 from .trend import EmaCross
+from .vol_target import VolTarget
 
 __all__ = [
     "Context",
@@ -24,4 +25,5 @@ __all__ = [
     "MicroScalp",
     "NeverLose",
     "SlowTrend",
+    "VolTarget",
 ]
