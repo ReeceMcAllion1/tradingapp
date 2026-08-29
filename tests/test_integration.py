@@ -274,6 +274,45 @@ class TestLiveRunner(unittest.TestCase):
         return LiveRunner(config=config, strategy=strategy, feed=feed,
                           broker=PaperBroker(config.costs)), strategy
 
+    def test_warming_up_satisfies_the_engine_too(self):
+        """Otherwise the warm-up is charged twice and the bot sits idle for a second one.
+
+        The engine refuses to act on its first ``warmup`` bars so nothing trades on
+        half-formed indicators. It counts bars it has seen, and warm-up deliberately
+        bypasses it - so a primed strategy still waited a full warmup period of *live*
+        bars before the engine would let it do anything. On daily candles with a 200-day
+        average that is two hundred trading days of a bot that holds nothing and reports
+        nothing wrong, repeated on every restart.
+        """
+        candles = SyntheticFeed(bars=300, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, _ = self._counting_runner(tmp, RealisticFeed(candles, 200))
+            runner.strategy.warmup = 50
+            self.assertEqual(runner.engine.bars_seen, 0)
+            runner.warm_up()
+            self.assertGreaterEqual(
+                runner.engine.bars_seen, runner.strategy.warmup,
+                "the engine still thinks it is warming up after warm-up finished",
+            )
+
+    def test_a_short_history_still_leaves_the_engine_gating(self):
+        """If the feed could only supply ten bars, ten bars is all it may claim."""
+        candles = SyntheticFeed(bars=300, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, _ = self._counting_runner(tmp, RealisticFeed(candles[:12], 12))
+            runner.strategy.warmup = 50
+            runner.warm_up()
+            self.assertLess(runner.engine.bars_seen, 50,
+                            "claimed more warm-up than the feed actually provided")
+
+    def test_a_resumed_session_does_not_lose_bars_it_had_already_seen(self):
+        candles = SyntheticFeed(bars=300, seed=1).generate()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, _ = self._counting_runner(tmp, RealisticFeed(candles, 200))
+            runner.engine.bars_seen = 5000
+            runner.warm_up()
+            self.assertEqual(runner.engine.bars_seen, 5000)
+
     def test_a_bar_is_never_shown_to_the_strategy_twice(self):
         """Warm-up ends on the newest closed bar; the stream then offers it again.
 

@@ -104,6 +104,24 @@ class LiveRunner:
         # advances its indicators an extra step.
         if history:
             self._last_bar_ts = max(self._last_bar_ts, history[-1].ts)
+
+        # Tell the engine the strategy is already primed. The engine refuses to act on
+        # its first ``warmup`` bars so nothing trades on half-formed indicators - but it
+        # counts bars *it* has seen, and warm-up deliberately bypasses it. Left alone the
+        # warm-up is therefore charged twice: the strategy is ready, and the engine sits
+        # on its hands for another full warmup period of live bars.
+        #
+        # The cost of that scales with the bar size, which is what makes it serious
+        # rather than untidy. A 30-bar strategy on one-minute candles loses half an hour.
+        # A 200-day moving average on daily candles loses two hundred trading days -
+        # the better part of a year in which the bot holds nothing, learns nothing and
+        # reports nothing wrong - and the supervised runner restarts on crash, so it
+        # pays that again every time.
+        #
+        # max() rather than assignment: a resumed session may already have seen more
+        # bars than this warm-up covered, and a short history must still leave the
+        # engine gating the difference.
+        self.engine.bars_seen = max(self.engine.bars_seen, len(history))
         log.info("warmed up on %d historical bars", len(history))
         return len(history)
 
