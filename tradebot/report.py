@@ -110,7 +110,10 @@ def load(config: Config, name: str = "") -> SessionReport:
         symbol=payload.get("symbol", "?"),
         interval=payload.get("interval", ""),
         strategy=payload.get("strategy", "?"),
-        bars=int(engine.get("bars_seen", 0)),
+        # "live_bars" is the count of bars this session actually traded. The engine's
+        # own counter includes the warm-up it was told about at startup, so using it
+        # here would report a run as older and busier than it is.
+        bars=int(payload.get("live_bars", engine.get("bars_seen", 0))),
         started=started,
         updated=updated,
         equity=float(book.get("cash", 0.0)),

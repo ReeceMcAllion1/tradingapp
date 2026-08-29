@@ -279,6 +279,11 @@ class LiveRunner:
             "interval": self.config.market.interval,
             "strategy": self.strategy.name,
             "last_bar_ts": self._last_bar_ts,
+            # Bars this session actually traded, as distinct from the engine's counter,
+            # which also carries the warm-up so its gate is satisfied. Reporting the
+            # engine's number as session activity credits a fresh run with a hundred
+            # bars of work it did not do.
+            "live_bars": self._bars,
             "engine": self.engine.state(),
         }
         path = self.state_path
@@ -311,6 +316,7 @@ class LiveRunner:
         self._started_at = int(payload.get("started_at") or self._started_at)
         # Resuming into the bar the previous process already handled would repeat it.
         self._last_bar_ts = max(self._last_bar_ts, int(payload.get("last_bar_ts") or 0))
+        self._bars = int(payload.get("live_bars", 0))
         self.engine.restore(payload["engine"])
         log.info(
             "resumed from %s: position %.8f, cash %.2f%s",

@@ -6,6 +6,7 @@ they matter more than most.
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -321,6 +322,44 @@ class TestSessionReport(unittest.TestCase):
     def test_nothing_to_report_is_handled(self):
         from tradebot import report as report_mod
         self.assertIn("No sessions", report_mod.render([]))
+
+
+class TestBarsProcessedMeansLiveBars(unittest.TestCase):
+    """A session must not be credited with the warm-up it was handed at startup.
+
+    The engine's bar counter carries the warm-up so its "do not trade on half-formed
+    indicators" gate is satisfied by history rather than by waiting through it again
+    live. Reporting that number as session activity tells you a run three bars old has
+    processed a hundred and three.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.config = Config()
+        self.config.live.state_file = str(self.tmp / "state.json")
+        self.config.live.trades_file = str(self.tmp / "trades.csv")
+        self.config.market.symbol = "BTC_USD"
+
+    def write(self, **extra):
+        payload = {
+            "saved_at": 1_700_086_400_000, "started_at": 1_700_000_000_000,
+            "symbol": "BTC_USD", "interval": "1m", "strategy": "vol_target",
+            "engine": {"portfolio": {"qty": 0.0, "cash": 1000.0}, "risk": {},
+                       "bars_seen": 103},
+            **extra,
+        }
+        Path(self.config.live.state_file).write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_it_reports_the_bars_actually_traded(self):
+        from tradebot import report as report_mod
+        self.write(live_bars=3)
+        self.assertEqual(report_mod.load(self.config).bars, 3)
+
+    def test_a_state_file_without_the_count_falls_back_rather_than_failing(self):
+        """Older state files predate the split; reading them must still work."""
+        from tradebot import report as report_mod
+        self.write()
+        self.assertEqual(report_mod.load(self.config).bars, 103)
 
 
 class TestSessionVerdict(unittest.TestCase):
