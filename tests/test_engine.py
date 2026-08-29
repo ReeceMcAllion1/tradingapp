@@ -322,7 +322,7 @@ class TestRejectionHandling(unittest.TestCase):
             def __init__(self):
                 self.calls = 0
 
-            def execute(self, ts, signed_qty, reference_price, reason):
+            def execute(self, ts, signed_qty, reference_price, reason, liquidity=None):
                 self.calls += 1
                 raise BrokerError("insufficient funds")
 
@@ -357,7 +357,7 @@ class TestRejectionHandling(unittest.TestCase):
         class Withholding(Broker):
             is_live = True
 
-            def execute(self, ts, signed_qty, reference_price, reason):
+            def execute(self, ts, signed_qty, reference_price, reason, liquidity=None):
                 return None
 
         costs = CostModel(taker_fee_bps=0, maker_fee_bps=0, half_spread_bps=0, slippage_bps=0)
@@ -389,7 +389,7 @@ class TestRejectionHandling(unittest.TestCase):
                 self.n = 0
                 self.paper = PaperBroker(costs)
 
-            def execute(self, ts, signed_qty, reference_price, reason):
+            def execute(self, ts, signed_qty, reference_price, reason, liquidity=None):
                 self.n += 1
                 if self.n <= 2:
                     raise BrokerError("temporary")
@@ -577,3 +577,56 @@ class TestDailyOrderCap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHoldingKeepsItsProtection(unittest.TestCase):
+    """A stop set on entry must survive the bars where the strategy just holds.
+
+    This was a live bug. "Hold, change nothing" cleared the brackets, so a strategy
+    that set a stop on entry and then returned a bare Decision(None) lost that stop on
+    the very next bar and carried the next crash uncapped. The stop was right there in
+    the entry decision, gone before it could ever fire, and nothing reported it.
+
+    None of the shipped strategies were bitten, because each happens to re-assert its
+    brackets every bar. That is luck, not a design, and it is exactly the trap someone
+    writing their own strategy would fall into.
+    """
+
+    def test_a_stop_survives_a_bare_hold(self):
+        # explicit holds: the default fallback in Scripted is "go flat", not "hold"
+        strategy = Scripted([Decision(1.0, stop_loss=95.0, reason="enter")]
+                            + [Decision(None, reason="hold")] * 5)
+        engine, portfolio, _ = make_engine(strategy, cash=10_000.0)
+
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 101, 99, 100))
+        self.assertAlmostEqual(engine.active_stop, 95.0)
+
+        engine.process(candle(3, 100, 101, 99, 100))     # a bare hold
+        self.assertAlmostEqual(engine.active_stop, 95.0, msg="the stop was silently dropped")
+
+        engine.process(candle(4, 94, 94, 90, 91))        # crash
+        self.assertTrue(portfolio.is_flat, "the stop did not fire")
+
+    def test_a_named_bracket_still_replaces_the_old_one(self):
+        """Silence is preserved; an instruction is obeyed - that is what lets stops trail."""
+        strategy = Scripted([
+            Decision(1.0, stop_loss=95.0, reason="enter"),
+            Decision(None, stop_loss=98.0, reason="trail it up"),
+            Decision(None, reason="hold"),
+        ])
+        engine, _, _ = make_engine(strategy, cash=10_000.0)
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 101, 99, 100))
+        engine.process(candle(3, 100, 101, 99, 100))
+        self.assertAlmostEqual(engine.active_stop, 98.0)
+
+    def test_going_flat_still_clears_everything(self):
+        strategy = Scripted([Decision(1.0, stop_loss=95.0, reason="enter"),
+                             Decision(0.0, reason="out"), Decision(None, reason="hold")])
+        engine, portfolio, _ = make_engine(strategy, cash=10_000.0)
+        engine.process(candle(1, 100, 100, 100, 100))
+        engine.process(candle(2, 100, 101, 99, 100))
+        engine.process(candle(3, 100, 101, 99, 100))
+        self.assertTrue(portfolio.is_flat)
+        self.assertIsNone(engine.active_stop)

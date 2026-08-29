@@ -412,6 +412,46 @@ priced the same way.
 The conclusion has not changed, it has sharpened: **this is insurance, and volatility
 targeting is a much better way to buy it than direction-timing was.**
 
+---
+
+## The other lever: paying maker fees instead of taker
+
+Every improvement above is a guess about markets. This one is not. Venues charge makers
+about half what they charge takers, so routing orders passively halves the fee on every
+fill — no forecast required. It is the most obviously attractive idea in the project,
+which is why it needed the most careful modelling.
+
+The trap is that the saving is visible and its cost is not. A resting buy fills only
+when price comes *down* to it; when price runs away upward you do not fill, and you miss
+the move you wanted. You are systematically filled on the trades that immediately go
+against you and left behind on the ones that would have worked. Model the discount
+without the miss and passive orders look like free money in every backtest ever run.
+
+Modelled honestly — including the miss — the in-sample gain looked excellent: **+£4,276
+on one ten-year run.** Then `maker_queue_bps` was added, which requires price to trade
+*through* the limit rather than merely touch it, modelling being behind other orders at
+that price. That is where it fell apart:
+
+| Fill assumption | Result across six ten-year runs |
+|---|---|
+| touch = fill (optimistic) | +£310 to +£4,276 — **positive every time** |
+| must trade 5 bp through | mixed, +£3,104 to −£1,187 |
+| must trade 25 bp through | **negative every time**, to −£3,557 |
+| must trade 100 bp through | −£1,015 to −£8,988 |
+
+**The entire gain lives inside the assumption that you get filled easily.** For a
+retail order resting at a popular price, behind everyone already there, the pessimistic
+column is the honest one.
+
+Out of sample on the five held-back markets it is a small, consistent positive — median
+−4.8pp becomes −4.1pp, or −2.9pp under a mild queue — and −4.6pp under a harsh one. Real,
+worth having, and nowhere near enough to change the answer.
+
+So `maker_offset_bps` ships **off**. Turning it on is defensible if you trade small size
+in a liquid market and are patient; it is not defensible as a default, because the
+number that makes it look good is an assumption about the order book rather than a
+measurement of one. Live fills would settle it, and nothing short of live fills will.
+
 ## Seeing the trades
 
 Every number above can be checked, trade by trade:
@@ -490,7 +530,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Seven: a benchmark, two that fail instructively, and two that insure |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 338, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 367, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
 every strategy's end-to-end result to the penny, so a change to fill pricing or bracket
@@ -506,7 +546,7 @@ venue's published algorithm; it does not prove the algorithm is current, and non
 has been checked against a funded account.
 
 `./scripts/mutation-sweep.sh` asks the harder question: would these tests fail if the
-code were wrong? It breaks the package on purpose, 38 times — a cost that stops being
+code were wrong? It breaks the package on purpose, 42 times — a cost that stops being
 charged, a limit that stops binding, a validator that stops validating — and checks the
 suite rejects each one. Every mutation is currently caught. It is worth running after
 any change to the engine, the cost model or the analysis modules, because a test that

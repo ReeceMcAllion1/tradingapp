@@ -206,7 +206,15 @@ class CryptoComBroker(Broker):
 
     # ------------------------------------------------------------------ orders
 
-    def execute(self, ts: int, signed_qty: float, reference_price: float, reason: str) -> Fill | None:
+    def execute(self, ts: int, signed_qty: float, reference_price: float, reason: str,
+                liquidity: Liquidity = Liquidity.TAKER) -> Fill | None:
+        """Places a MARKET order regardless of ``liquidity``.
+
+        A market order is a taker by definition, so the flag is accepted and ignored
+        rather than quietly booking a maker fee this venue would not have charged.
+        Resting limit orders live-side are not implemented; a backtest run with
+        ``maker_offset_bps`` set therefore does not describe what this broker does.
+        """
         if abs(signed_qty) < 1e-12:
             return None
 

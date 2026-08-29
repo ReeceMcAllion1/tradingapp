@@ -200,6 +200,22 @@ mutate tradebot/brokers/cryptocom.py \
 mutate tradebot/live.py \
     'if candle.ts <= self._last_bar_ts:' 'if False:' \
     'the same bar is processed twice'
+mutate tradebot/engine.py \
+    'touched = candle.low <= through if buying else candle.high >= through' \
+    'touched = True' \
+    'limit orders always fill, so the miss is never paid for'
+mutate tradebot/engine.py \
+    'else order.limit_price * (1.0 + self.execution.maker_queue_bps * 1e-4)' \
+    'else order.limit_price' \
+    'the queue assumption stops being applied to sells'
+mutate tradebot/brokers/paper.py \
+    'fee=self.costs.fee(qty * price, liquidity),' \
+    'fee=self.costs.fee(qty * price, Liquidity.MAKER),' \
+    'every fill is billed at the cheaper maker rate'
+mutate tradebot/engine.py \
+    'if decision.is_hold and decision.stop_loss is None and decision.take_profit is None:' \
+    'if False:' \
+    'holding silently drops its own stop-loss'
 
 echo
 echo "  Strategies and feeds"

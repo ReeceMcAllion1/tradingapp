@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..types import Fill
+from ..types import Fill, Liquidity
 
 
 class BrokerError(RuntimeError):
@@ -24,8 +24,15 @@ class Broker(ABC):
     is_live: bool = False
 
     @abstractmethod
-    def execute(self, ts: int, signed_qty: float, reference_price: float, reason: str) -> Fill | None:
-        """Buy (positive qty) or sell (negative qty). Returns the resulting fill."""
+    def execute(self, ts: int, signed_qty: float, reference_price: float, reason: str,
+                liquidity: Liquidity = Liquidity.TAKER) -> Fill | None:
+        """Buy (positive qty) or sell (negative qty). Returns the resulting fill.
+
+        ``liquidity`` says whether this order crossed the spread or rested on the book.
+        It changes the fee, and on most venues halves it - so a broker that ignores it
+        silently overcharges every maker fill and hides the only cost saving available
+        without a forecast.
+        """
 
     def sync_position(self) -> float | None:
         """Real position held at the venue, if the broker can tell. ``None`` if not.

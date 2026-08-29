@@ -27,7 +27,7 @@ from .costs import CostModel
 from .portfolio import Portfolio
 from .risk import RiskManager
 from .strategies.base import Context, Strategy
-from .types import Candle, Decision, Fill, Side
+from .types import Candle, Decision, Fill, Liquidity, Side
 
 
 @dataclass
@@ -68,6 +68,35 @@ class ExecutionSettings:
     is a condition a human needs to look at, not one to retry into.
 
     Opening and closing are never blocked by either setting - only resizing.
+
+    ``maker_offset_bps`` turns market orders into resting limit orders, priced this far
+    on the passive side of the reference. Venues charge makers less than takers - half,
+    on the defaults here - and halving the fee is the one improvement available that
+    needs no forecast at all. It is off by default (0.0) because the discount is not
+    free, and the reason it is not free is the whole point of modelling it:
+
+    A resting buy only fills if price comes down to it. If price runs away upward you
+    do not fill, and you miss the move you wanted. So you are systematically filled on
+    the trades that immediately go against you and left behind on the ones that would
+    have worked. That is adverse selection, and it is paid in returns rather than fees,
+    which is exactly why it is invisible to anyone who models the discount but not the
+    miss. Whether the cheaper fee outweighs it is an empirical question this setting
+    exists to answer honestly rather than assume.
+
+    ``maker_queue_bps`` is the pessimism dial on all of the above, and it exists because
+    the obvious model of a limit fill is too kind. Assuming that price merely *touching*
+    your limit fills you ignores the queue: at a popular price there are other orders
+    ahead of yours, and a level that is tagged once and bounces fills them, not you.
+    Requiring price to trade this far *through* the limit before counting a fill models
+    being at the back of that queue. Nought means the optimistic reading; raise it to
+    find out how much of the gain depends on getting filled easily.
+
+    ``maker_max_wait_bars`` is how long an unfilled order rests before it is given up
+    on. ``maker_then_take`` decides what happens then: cross the spread and pay the
+    taker fee (the position is reached, late and at a worse price), or abandon the
+    order entirely (no trade, no cost, no position). Stops and risk halts never rest -
+    getting out is always a market order, because a limit exit in a crash is an order
+    that does not fill precisely when you need it to.
     """
 
     qty_step: float = 0.0
@@ -75,6 +104,10 @@ class ExecutionSettings:
     rebalance_threshold: float = 0.005
     max_resize_cost_share: float = 0.10
     max_consecutive_rejections: int = 5
+    maker_offset_bps: float = 0.0
+    maker_max_wait_bars: int = 1
+    maker_then_take: bool = True
+    maker_queue_bps: float = 0.0
 
     def round_qty(self, qty: float) -> float:
         """Round down to the venue's lot size, so an order is never larger than intended."""
@@ -82,6 +115,16 @@ class ExecutionSettings:
             return qty
         steps = math.floor(abs(qty) / self.qty_step)
         return math.copysign(steps * self.qty_step, qty)
+
+
+@dataclass
+class RestingOrder:
+    """A limit order sitting on the book, waiting for price to come to it."""
+
+    decision: Decision
+    signed_qty: float
+    limit_price: float
+    bars_waited: int = 0
 
 
 @dataclass
@@ -94,10 +137,13 @@ class Engine:
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
 
     pending: Decision | None = None
+    resting: RestingOrder | None = None
     active_stop: float | None = None
     active_target: float | None = None
     bars_seen: int = 0
     consecutive_rejections: int = 0
+    maker_fills: int = 0
+    maker_misses: int = 0
 
     _log: list[str] = field(default_factory=list)
 
@@ -116,8 +162,13 @@ class Engine:
         fills: list[Fill] = []
         self.bars_seen += 1
 
+        # A limit order placed on an earlier bar is still on the book: give it this
+        # bar's range before deciding anything new.
+        if self.resting is not None:
+            fills += self._work_resting(candle)
+
         if self.pending is not None:
-            fills += self._execute(self.pending, candle.open, candle.ts)
+            fills += self._execute(self.pending, candle.open, candle.ts, candle)
             self.pending = None
 
         fills += self._check_brackets(candle)
@@ -174,11 +225,13 @@ class Engine:
             exit_price = max(target, candle.open) if long else min(target, candle.open)
 
         self.pending = None  # the bracket overrides whatever the last bar wanted
+        self.resting = None  # and cancels any limit order still on the book
         return self.close_position(float(exit_price), candle.ts, reason)
 
     # ------------------------------------------------------------------ execution
 
-    def _execute(self, decision: Decision, price: float, ts: int) -> list[Fill]:
+    def _execute(self, decision: Decision, price: float, ts: int,
+                 candle: Candle | None = None) -> list[Fill]:
         if decision.is_hold:
             # "Change nothing." The only thing that overrides it is a risk halt, which
             # must always be able to flatten - see RiskManager.evaluate.
@@ -217,11 +270,88 @@ class Engine:
             self._refresh_brackets(decision)
             return []
 
+        if self.execution.maker_offset_bps > 0 and candle is not None:
+            self._refresh_brackets(decision)
+            return self._rest_order(decision, delta, price, candle)
+
         fill = self._submit(ts, delta, price, decision.reason)
         self._refresh_brackets(decision)
         if fill is None:
             return []
         self._record(ts, f"{fill.side.value} {fill.qty:.8f} @ {fill.price:.2f} - {decision.reason}")
+        return [fill]
+
+    # ------------------------------------------------------------------ maker orders
+
+    def _rest_order(self, decision: Decision, signed_qty: float,
+                    reference_price: float, candle: Candle) -> list[Fill]:
+        """Place a limit order on the passive side and see if this bar reaches it."""
+        offset = self.execution.maker_offset_bps * 1e-4
+        if signed_qty > 0:
+            limit = reference_price * (1.0 - offset)
+        else:
+            limit = reference_price * (1.0 + offset)
+
+        self.resting = RestingOrder(decision=decision, signed_qty=signed_qty, limit_price=limit)
+        self._record(candle.ts,
+                     f"resting {'buy' if signed_qty > 0 else 'sell'} {abs(signed_qty):.8f} "
+                     f"@ {limit:.2f} - {decision.reason}")
+        return self._work_resting(candle)
+
+    def _work_resting(self, candle: Candle) -> list[Fill]:
+        """Fill, keep waiting, or give up on the order currently on the book.
+
+        A buy fills only if the bar traded down to the limit; a sell only if it traded
+        up to it. A bar that gaps straight past the limit fills at the open instead,
+        which is *better* than the limit - the book cannot fill you worse than the price
+        you named, and that asymmetry is the one thing a limit order buys you.
+
+        Not filling is the cost. Price ran away, the position was never taken, and
+        whatever that move was worth is gone. The counters make that visible rather
+        than letting a good fill rate be assumed.
+        """
+        order = self.resting
+        if order is None:
+            return []
+
+        buying = order.signed_qty > 0
+        # Price must reach the limit, and - if a queue is being modelled - push through
+        # it far enough that the orders ahead of ours would have been cleared first.
+        through = order.limit_price * (1.0 - self.execution.maker_queue_bps * 1e-4) if buying \
+            else order.limit_price * (1.0 + self.execution.maker_queue_bps * 1e-4)
+        touched = candle.low <= through if buying else candle.high >= through
+
+        if touched:
+            price = min(order.limit_price, candle.open) if buying else max(order.limit_price, candle.open)
+            self.resting = None
+            self.maker_fills += 1
+            fill = self._submit(candle.ts, order.signed_qty, float(price),
+                                order.decision.reason, Liquidity.MAKER)
+            if fill is None:
+                return []
+            self._record(candle.ts,
+                         f"maker {fill.side.value} {fill.qty:.8f} @ {fill.price:.2f} "
+                         f"- {order.decision.reason}")
+            return [fill]
+
+        order.bars_waited += 1
+        if order.bars_waited < self.execution.maker_max_wait_bars:
+            return []
+
+        # Out of patience. Either cross the spread and pay for certainty, or walk away.
+        self.resting = None
+        self.maker_misses += 1
+        if not self.execution.maker_then_take:
+            self._record(candle.ts, f"limit never filled, order abandoned - {order.decision.reason}")
+            return []
+
+        fill = self._submit(candle.ts, order.signed_qty, candle.close,
+                            f"{order.decision.reason} (crossed after {order.bars_waited} bars)")
+        if fill is None:
+            return []
+        self._record(candle.ts,
+                     f"crossed {fill.side.value} {fill.qty:.8f} @ {fill.price:.2f} "
+                     f"- limit missed, paid taker")
         return [fill]
 
     def _resize_is_worth_it(self, target: float, current: float, equity: float) -> bool:
@@ -277,7 +407,8 @@ class Engine:
         self._record(ts, f"{reason}: {fill.side.value} {fill.qty:.8f} @ {fill.price:.2f}")
         return [fill]
 
-    def _submit(self, ts: int, signed_qty: float, reference_price: float, reason: str) -> Fill | None:
+    def _submit(self, ts: int, signed_qty: float, reference_price: float, reason: str,
+                liquidity: Liquidity = Liquidity.TAKER) -> Fill | None:
         """Send an order to the broker and book whatever came back.
 
         A broker returning ``None`` means nothing was executed - a dry run, a rejected
@@ -286,7 +417,7 @@ class Engine:
         """
         assert self.broker is not None  # set in __post_init__
         try:
-            fill = self.broker.execute(ts, signed_qty, reference_price, reason)
+            fill = self.broker.execute(ts, signed_qty, reference_price, reason, liquidity)
         except BrokerError as exc:
             self.consecutive_rejections += 1
             self._record(ts, f"order rejected ({self.consecutive_rejections}): {exc}")
@@ -307,9 +438,23 @@ class Engine:
         return fill
 
     def _refresh_brackets(self, decision: Decision) -> None:
+        """Update the live stop and target from a decision.
+
+        A hold that names no brackets keeps the ones already standing. This looks like
+        a detail and is not: "hold, change nothing" previously cleared the stop, so a
+        strategy that set a stop on entry and then held with a bare ``Decision(None)``
+        lost its protection on the very next bar and rode the next crash uncapped. The
+        stop was visible in the entry decision, gone before it could ever trigger, and
+        nothing anywhere said so.
+
+        A decision that does name a bracket still replaces the old one, which is what
+        lets a trailing stop ratchet. Only silence is treated as silence.
+        """
         if self.portfolio.is_flat:
             self.active_stop = None
             self.active_target = None
+            return
+        if decision.is_hold and decision.stop_loss is None and decision.take_profit is None:
             return
         self.active_stop = decision.stop_loss
         self.active_target = decision.take_profit
@@ -329,6 +474,8 @@ class Engine:
             "active_target": self.active_target,
             "bars_seen": self.bars_seen,
             "consecutive_rejections": self.consecutive_rejections,
+            "maker_fills": self.maker_fills,
+            "maker_misses": self.maker_misses,
         }
 
     def restore(self, state: dict) -> None:
@@ -338,3 +485,5 @@ class Engine:
         self.active_target = state.get("active_target")
         self.bars_seen = int(state.get("bars_seen", 0))
         self.consecutive_rejections = int(state.get("consecutive_rejections", 0))
+        self.maker_fills = int(state.get("maker_fills", 0))
+        self.maker_misses = int(state.get("maker_misses", 0))
