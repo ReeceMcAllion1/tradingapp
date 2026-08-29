@@ -323,6 +323,57 @@ class TestSessionReport(unittest.TestCase):
         self.assertIn("No sessions", report_mod.render([]))
 
 
+class TestSessionVerdict(unittest.TestCase):
+    """The two figures a session is actually judged on.
+
+    Both survived a mutation sweep - the "vs hold" gap could report the raw return
+    instead of the difference, and the win count could count every trade as a winner,
+    with the whole suite still green. Both fail in the flattering direction, which is
+    the direction this package is meant to be paranoid about. The README tells people
+    to read the "vs hold" column first; it had better be that column.
+    """
+
+    def session(self, **kwargs):
+        from tradebot import report as report_mod
+
+        defaults = dict(
+            name="x", symbol="BTC_USD", interval="1h", strategy="x", bars=100,
+            started=None, updated=None, equity=1100.0, position=0.0,
+            starting_cash=1000.0, costs=5.0, trades=[],
+        )
+        return report_mod.SessionReport(**{**defaults, **kwargs})
+
+    def test_the_gap_is_measured_against_the_benchmark(self):
+        report = self.session(benchmark_return_pct=30.0)
+        self.assertAlmostEqual(report.return_pct, 10.0)
+        self.assertAlmostEqual(report.gap, -20.0, msg="10% against a 30% market is losing")
+
+    def test_beating_the_market_gives_a_positive_gap(self):
+        self.assertAlmostEqual(self.session(benchmark_return_pct=4.0).gap, 6.0)
+
+    def test_no_benchmark_means_no_gap_rather_than_a_flattering_one(self):
+        self.assertIsNone(self.session().gap)
+
+    def test_a_losing_session_in_a_worse_market_still_beat_it(self):
+        report = self.session(equity=900.0, benchmark_return_pct=-30.0)
+        self.assertAlmostEqual(report.return_pct, -10.0)
+        self.assertAlmostEqual(report.gap, 20.0)
+
+    def test_only_profitable_trades_count_as_wins(self):
+        trades = [{"net": "5.0"}, {"net": "-3.0"}, {"net": "0.0"}, {"net": "1.5"}]
+        self.assertEqual(self.session(trades=trades).wins, 2)
+
+    def test_a_break_even_trade_is_not_a_win(self):
+        self.assertEqual(self.session(trades=[{"net": "0.0"}]).wins, 0)
+
+    def test_an_unreadable_net_field_is_not_counted_as_a_win(self):
+        """A malformed row must not inflate the record."""
+        self.assertEqual(self.session(trades=[{"net": ""}, {}]).wins, 0)
+
+    def test_all_losses_report_no_wins(self):
+        self.assertEqual(self.session(trades=[{"net": "-1"}, {"net": "-2"}]).wins, 0)
+
+
 class TestBenchmarkWindow(unittest.TestCase):
     """The benchmark must span the session's clock, not its bar count.
 
