@@ -32,9 +32,24 @@ The shipped configs use **hourly** bars, and a session writes its first update w
 first bar *closes* — so an empty dashboard for up to an hour after starting is expected,
 not a fault. Bitcoin trades around the clock, so market hours never come into it.
 
-To see it working within a minute or two instead, set `interval = "1m"` in the config
-and restart. It trades exactly the same way, just on a faster clock — useful for
-checking the machinery, useless for judging a strategy.
+To see it working within a minute or two instead:
+
+```bat
+scripts\paper-run.bat stop
+scripts\paper-run.bat fast
+```
+
+That runs the same sessions on a one-minute clock. No file editing — which also avoids
+the Windows TOML trap above. It trades exactly the same way, just faster: useful for
+checking the machinery, useless for judging a strategy, because a one-minute bar pays
+the same fee as an hourly one for a far smaller move. That is the whole argument this
+repository makes, so do not read anything into the returns.
+
+For a single session, the flag is `--interval`:
+
+```bat
+py -m tradebot --config configs\buy_and_hold.toml paper --interval 1m
+```
 
 Still empty well past a full interval? The session is not running. `scripts\paper-run.bat
 logs` shows why.

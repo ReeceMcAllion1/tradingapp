@@ -670,7 +670,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Seven: a benchmark, two that fail instructively, and two that insure |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 437, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 440, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
 every strategy's end-to-end result to the penny, so a change to fill pricing or bracket

@@ -543,8 +543,33 @@ def cmd_backtest(args) -> int:
     return 0
 
 
+def _apply_market_overrides(config, args) -> None:
+    """Let the command line override the market a config names.
+
+    Editing a TOML file to try a different interval is a surprising amount of friction
+    for a one-off, and on Windows it is worse than friction: hand-editing config files
+    is exactly where a native path turns into invalid TOML. A flag avoids the file
+    entirely.
+
+    The state file is keyed by symbol, so overriding the symbol would try to resume one
+    market's position into another's session. The runner already refuses that and starts
+    fresh; this says so up front rather than leaving it to be discovered in a log.
+    """
+    if getattr(args, "interval", None):
+        if args.interval != config.market.interval:
+            print(f"  interval overridden: {config.market.interval} -> {args.interval}")
+        config.market.interval = args.interval
+    if getattr(args, "symbol", None):
+        symbol = args.symbol.upper()
+        if symbol != config.market.symbol:
+            print(f"  symbol overridden: {config.market.symbol} -> {symbol}")
+            print("  (a session's saved state belongs to its own symbol, so this starts fresh)")
+        config.market.symbol = symbol
+
+
 def cmd_paper(args) -> int:
     config = config_mod.load(args.config)
+    _apply_market_overrides(config, args)
     configure_logging(config.live.log_file, args.verbose)
 
     strategy = _build_strategy(args, config)
@@ -1005,6 +1030,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("paper", help="run automated on live data with simulated money")
     p.add_argument("-s", "--strategy", help="strategy name (default: from config)")
     p.add_argument("--max-bars", type=int, help="stop after N bars (default: run forever)")
+    p.add_argument("--interval", help="override the config's bar size, e.g. 1m 5m 1h")
+    p.add_argument("--symbol", help="override the config's instrument, e.g. ETH_USD")
     p.set_defaults(func=cmd_paper)
 
     p = sub.add_parser("preflight", help="check whether you are ready to trade real money")

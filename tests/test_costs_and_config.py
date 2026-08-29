@@ -369,3 +369,38 @@ class TestWindowsPathsInConfig(unittest.TestCase):
         windows = "C:\\Users\\Reece\\AppData\\Local\\Temp\\tmp1\\state.json"
         path = self.write(f"[live]\nstate_file = {toml_path(windows)}\n")
         self.assertEqual(config_mod.load(str(path)).live.state_file, windows)
+
+
+class TestMarketOverrides(unittest.TestCase):
+    """`--interval` and `--symbol`, so trying something does not mean editing a file.
+
+    Editing TOML for a one-off is friction everywhere and a hazard on Windows, where a
+    hand-typed path is the exact thing that turns a config into invalid TOML.
+    """
+
+    def args(self, **kw):
+        import argparse
+        return argparse.Namespace(**{"interval": None, "symbol": None, **kw})
+
+    def test_the_interval_can_be_overridden(self):
+        from tradebot.cli import _apply_market_overrides
+
+        config = config_mod.Config()
+        config.market.interval = "1h"
+        _apply_market_overrides(config, self.args(interval="1m"))
+        self.assertEqual(config.market.interval, "1m")
+
+    def test_the_symbol_is_upper_cased_like_the_venue_expects(self):
+        from tradebot.cli import _apply_market_overrides
+
+        config = config_mod.Config()
+        _apply_market_overrides(config, self.args(symbol="eth_usd"))
+        self.assertEqual(config.market.symbol, "ETH_USD")
+
+    def test_nothing_given_changes_nothing(self):
+        from tradebot.cli import _apply_market_overrides
+
+        config = config_mod.Config()
+        before = (config.market.symbol, config.market.interval)
+        _apply_market_overrides(config, self.args())
+        self.assertEqual((config.market.symbol, config.market.interval), before)

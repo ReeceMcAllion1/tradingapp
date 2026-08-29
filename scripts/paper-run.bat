@@ -6,6 +6,7 @@ REM Windows users with no way to start more than one session at a time. This is 
 REM same idea in the one scripting language every Windows machine already has.
 REM
 REM   scripts\paper-run.bat start     start a session for every config in configs\
+REM   scripts\paper-run.bat fast      the same, on 1-minute bars, to see it working now
 REM   scripts\paper-run.bat status    what each session is doing
 REM   scripts\paper-run.bat report    the verdict so far, against buy-and-hold
 REM   scripts\paper-run.bat watch     open the live dashboard in a browser
@@ -33,6 +34,7 @@ set ACTION=%~1
 if "%ACTION%"=="" set ACTION=start
 
 if /i "%ACTION%"=="start" goto :start
+if /i "%ACTION%"=="fast"  goto :fast
 if /i "%ACTION%"=="status" goto :status
 if /i "%ACTION%"=="report" goto :report
 if /i "%ACTION%"=="watch"  goto :watch
@@ -62,10 +64,24 @@ exit /b 0
 
 :stop
 if /i "%ACTION%"=="logs"   goto :logs
-echo Unknown command "%ACTION%". Use start, status, report, watch, logs or stop.
+echo Unknown command "%ACTION%". Use start, fast, status, report, watch, logs or stop.
 exit /b 1
 
+:fast
+REM Same sessions on a one-minute clock, so the machinery is visible within a couple of
+REM minutes instead of an hour. Good for checking it runs; useless for judging a
+REM strategy, because a minute bar pays the same fee as an hour bar for a much smaller
+REM move - which is the whole argument this repository makes.
+set INTERVAL=1m
+echo   Starting on 1-minute bars. First update in a minute or two.
+echo   This is for seeing it work, not for judging it - see the README on cost drag.
+goto :launch
+
 :start
+set INTERVAL=
+goto :launch
+
+:launch
 if not exist state mkdir state
 for %%F in ("%CONFIGS%\*.toml") do (
   echo   starting %%~nF
@@ -74,7 +90,11 @@ for %%F in ("%CONFIGS%\*.toml") do (
   REM paths here are relative to the repo root we already cd'd into, so they are short
   REM and space-free, and the redirection is what captures a crash the app never gets
   REM to log itself.
-  start "tradebot %%~nF" /min cmd /c py -m tradebot --config %%F paper ^>^> state\%%~nF_session.log 2^>^&1
+  if defined INTERVAL (
+    start "tradebot %%~nF" /min cmd /c py -m tradebot --config %%F paper --interval %INTERVAL% ^>^> state\%%~nF_session.log 2^>^&1
+  ) else (
+    start "tradebot %%~nF" /min cmd /c py -m tradebot --config %%F paper ^>^> state\%%~nF_session.log 2^>^&1
+  )
 )
 echo.
 echo   Running. Each session is in its own minimised window.
