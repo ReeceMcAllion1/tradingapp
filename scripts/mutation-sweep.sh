@@ -286,6 +286,14 @@ mutate tradebot/dashboard.py \
     'HOST = "127.0.0.1"' 'HOST = "0.0.0.0"' \
     'the dashboard is exposed to the whole network'
 mutate tradebot/dashboard.py \
+    'ready = [s for s in sessions if not s.get("waiting") and s.get("marked")]' \
+    'ready = sessions' \
+    'the portfolio total silently drops sleeves it cannot value'
+mutate tradebot/dashboard.py \
+    'staked = sum(s["starting_cash"] for s in sessions)' \
+    'staked = sum(s["starting_cash"] for s in ready)' \
+    'capital staked shrinks when a sleeve cannot be priced'
+mutate tradebot/dashboard.py \
     'mark = raw_mark if marked else avg' \
     'mark = raw_mark if marked else 0.0' \
     'an unmarked position is valued at nothing'

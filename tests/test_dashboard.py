@@ -214,3 +214,78 @@ class TestTheWaitIsExplained(DashboardTestCase):
         self.assertTrue(s["waiting"])
         self.assertEqual(s["symbol"], "BTC_USD")
         self.assertEqual(s["interval"], "1h")
+
+
+class TestThePortfolioTotal(DashboardTestCase):
+    """Several sessions are one allocation, not several experiments.
+
+    Capital is split between them, so what matters is what the whole thing is worth.
+    Watching four cards and doing the arithmetic by eye is how a portfolio that is down
+    gets read as three that are fine and one that is not.
+    """
+
+    def sleeve(self, name, cash, qty, price, cash_per_sleeve=250.0, mark=True):
+        payload = {
+            "saved_at": 1, "started_at": 0, "symbol": name.upper(), "interval": "1h",
+            "strategy": "vol_target", "live_bars": 10,
+            "engine": {"portfolio": {"cash": cash, "qty": qty, "avg_price": price,
+                                     "fees_paid": 1.0, "slippage_paid": 0.0}, "risk": {}},
+        }
+        if mark:
+            payload["last_price"] = price
+        (self.tmp / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+        return dashboard.Session(
+            name=name, state_file=self.tmp / f"{name}.json",
+            trades_file=self.tmp / "none.csv", starting_cash=cash_per_sleeve,
+            currency="£", symbol=name.upper(), interval="1h",
+        )
+
+    def test_the_sleeves_are_added_up(self):
+        sessions = [self.sleeve("btc", 100.0, 0.002, 80_000.0),
+                    self.sleeve("eth", 50.0, 0.06, 3_500.0)]
+        p = dashboard.snapshot(sessions)["portfolio"]
+        self.assertEqual(p["sleeves"], 2)
+        self.assertAlmostEqual(p["staked"], 500.0)
+        self.assertAlmostEqual(p["equity"], 100 + 0.002 * 80_000 + 50 + 0.06 * 3_500)
+
+    def test_the_return_is_measured_on_the_whole_allocation(self):
+        sessions = [self.sleeve("btc", 300.0, 0.0, 80_000.0),
+                    self.sleeve("eth", 200.0, 0.0, 3_500.0)]
+        p = dashboard.snapshot(sessions)["portfolio"]
+        self.assertAlmostEqual(p["equity"], 500.0)
+        self.assertAlmostEqual(p["return_pct"], 0.0)
+
+    def test_a_single_session_gets_no_portfolio_line(self):
+        """One sleeve is not a portfolio; a total would just repeat the card above it."""
+        self.assertIsNone(dashboard.snapshot([self.sleeve("btc", 250.0, 0.0, 80_000.0)])["portfolio"])
+
+    def test_a_sleeve_that_cannot_be_valued_suppresses_the_total(self):
+        """Summing the rest would silently understate the portfolio."""
+        good = self.sleeve("btc", 100.0, 0.002, 80_000.0)
+        blind = self.sleeve("eth", 50.0, 0.06, 3_500.0, mark=False)
+        p = dashboard.snapshot([good, blind])["portfolio"]
+        self.assertFalse(p["complete"])
+        self.assertEqual(p["missing"], 1)
+        self.assertIsNone(p["equity"], "showed a total that was missing a sleeve")
+        self.assertIsNone(p["return_pct"])
+
+    def test_a_sleeve_still_waiting_also_suppresses_the_total(self):
+        good = self.sleeve("btc", 100.0, 0.002, 80_000.0)
+        waiting = dashboard.Session(
+            name="eth", state_file=self.tmp / "nothing.json",
+            trades_file=self.tmp / "none.csv", starting_cash=250.0, currency="£",
+            symbol="ETH_USD", interval="1h")
+        p = dashboard.snapshot([good, waiting])["portfolio"]
+        self.assertFalse(p["complete"])
+        self.assertEqual(p["missing"], 1)
+
+    def test_the_staked_total_counts_every_sleeve_even_the_blind_ones(self):
+        """What was committed does not depend on what can currently be priced."""
+        good = self.sleeve("btc", 100.0, 0.002, 80_000.0)
+        blind = self.sleeve("eth", 50.0, 0.06, 3_500.0, mark=False)
+        self.assertAlmostEqual(dashboard.snapshot([good, blind])["portfolio"]["staked"], 500.0)
+
+    def test_it_names_the_markets_it_is_spread_across(self):
+        sessions = [self.sleeve("btc", 100.0, 0.0, 80_000.0),
+                    self.sleeve("eth", 100.0, 0.0, 3_500.0)]
+        self.assertEqual(dashboard.snapshot(sessions)["portfolio"]["markets"], ["BTC", "ETH"])

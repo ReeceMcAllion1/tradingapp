@@ -128,6 +128,27 @@ machine, tunnel it rather than exposing it:
 ssh -N -L 8765:127.0.0.1:8765 you@your-box
 ```
 
+### Running the diversified portfolio
+
+`configs\basket\` holds four sleeves of one allocation - capital split equally, each
+market in its own process with its own books. The dashboard adds them up into a
+portfolio line above the individual cards:
+
+```bat
+set TRADEBOT_CONFIGS=configs\basket
+scripts\paper-run.bat start
+py -m tradebot dashboard configs\basket\*.toml
+```
+
+Separate processes on purpose: one market's crash cannot take the others down.
+
+A total appears only when every sleeve can be valued - a sleeve still waiting for its
+first bar would otherwise drop its share out of the sum and understate the whole thing.
+
+Check the members actually move differently before trusting a basket to diversify. The
+four shipped are all crypto and correlate above 0.8, which makes them much less of a
+basket than they look.
+
 Or, if you prefer the terminal:
 
 ```bash

@@ -142,7 +142,43 @@ def snapshot(sessions: list[Session]) -> dict:
             "trade_count": len(trades),
             "wins": wins,
         })
-    return {"sessions": out}
+    return {"sessions": out, "portfolio": portfolio_totals(out)}
+
+
+def portfolio_totals(sessions: list[dict]) -> dict | None:
+    """Add the sleeves up into the portfolio they collectively are.
+
+    Several sessions are not several experiments, they are one allocation: capital is
+    split between them and what matters is what the whole thing is worth. Watching four
+    cards and doing the arithmetic by eye is how a portfolio that is down gets read as
+    three that are fine and one that is not.
+
+    A total is only shown when every sleeve can be valued. A session still waiting for
+    its first bar, or holding a position with no price to mark it at, would silently
+    drop its share out of the sum and understate the portfolio - so the total says it is
+    incomplete instead, and says how many are missing. An arithmetic answer that is
+    quietly wrong is worse here than no answer.
+    """
+    if len(sessions) < 2:
+        return None
+
+    ready = [s for s in sessions if not s.get("waiting") and s.get("marked")]
+    missing = len(sessions) - len(ready)
+    staked = sum(s["starting_cash"] for s in sessions)
+    equity = sum(s["equity"] for s in ready)
+
+    return {
+        "sleeves": len(sessions),
+        "missing": missing,
+        "complete": missing == 0,
+        "staked": staked,
+        "equity": equity if missing == 0 else None,
+        "return_pct": ((equity / staked - 1.0) * 100.0) if missing == 0 and staked else None,
+        "fees": sum(s.get("fees", 0.0) for s in ready),
+        "trades": sum(s.get("trade_count", 0) for s in ready),
+        "currency": sessions[0].get("currency", ""),
+        "markets": sorted({s.get("symbol", "?") for s in sessions if s.get("symbol")}),
+    }
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -227,6 +263,7 @@ footer{color:var(--muted);font-size:12.5px;border-top:1px solid var(--hair);padd
     <h1>tradebot</h1>
     <span class="live" id="live"><span class="dot"></span><span id="ago">connecting</span></span>
   </header>
+  <div id="portfolio"></div>
   <div id="sessions"></div>
   <footer>
     Paper unless you deliberately armed live trading. Open positions are valued at the
@@ -314,11 +351,40 @@ function sessionCard(s) {
   </div>`;
 }
 
+function portfolioCard(p) {
+  if (!p) return "";
+  const cur = p.currency || "";
+  const pnl = p.complete ? p.equity - p.staked : null;
+  const markets = p.markets.length ? p.markets.join(", ") : "";
+  return `<div class="card">
+    <div class="head">
+      <span class="title">Portfolio</span>
+      <span class="sub">${p.sleeves} sleeves${markets ? " &middot; " + markets : ""}
+        &middot; ${cur}${fmt(p.staked)} staked</span>
+    </div>
+    ${p.complete ? "" : `<div class="banner">${p.missing} of ${p.sleeves} sleeves cannot be
+      valued yet, so no total is shown &mdash; adding up the rest would understate it.</div>`}
+    <div class="grid">
+      <div class="cell"><div class="k">Total equity</div>
+        <div class="v mono">${p.complete ? cur + fmt(p.equity) : "\u2014"}</div></div>
+      <div class="cell"><div class="k">Profit</div>
+        <div class="v mono ${p.complete ? cls(pnl) : "flat"}">${p.complete ? cur + sign(pnl) : "\u2014"}</div></div>
+      <div class="cell"><div class="k">Return</div>
+        <div class="v mono ${p.complete ? cls(pnl) : "flat"}">${p.complete ? sign(p.return_pct) + "%" : "\u2014"}</div></div>
+      <div class="cell"><div class="k">Fees paid</div>
+        <div class="v mono">${cur}${fmt(p.fees)}</div></div>
+      <div class="cell"><div class="k">Closed trades</div>
+        <div class="v mono">${p.trades}</div></div>
+    </div>
+  </div>`;
+}
+
 async function tick() {
   const live = document.getElementById("live");
   try {
     const r = await fetch("/api/state", {cache: "no-store"});
     const d = await r.json();
+    document.getElementById("portfolio").innerHTML = portfolioCard(d.portfolio);
     document.getElementById("sessions").innerHTML =
       d.sessions.length ? d.sessions.map(sessionCard).join("")
                         : `<div class="card"><div class="empty">No sessions configured.</div></div>`;
