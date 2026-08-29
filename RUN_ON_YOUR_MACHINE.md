@@ -22,8 +22,22 @@ git checkout claude/automated-trading-system-23jrwc
 py -m unittest discover -s tests -t .     :: check it works
 scripts\paper-run.bat start               :: start paper trading
 scripts\paper-run.bat watch               :: open the dashboard
+scripts\paper-run.bat logs                :: what each session is actually doing
 scripts\paper-run.bat stop                :: stop everything
 ```
+
+### "Waiting for its first bar" is normal
+
+The shipped configs use **hourly** bars, and a session writes its first update when its
+first bar *closes* — so an empty dashboard for up to an hour after starting is expected,
+not a fault. Bitcoin trades around the clock, so market hours never come into it.
+
+To see it working within a minute or two instead, set `interval = "1m"` in the config
+and restart. It trades exactly the same way, just on a faster clock — useful for
+checking the machinery, useless for judging a strategy.
+
+Still empty well past a full interval? The session is not running. `scripts\paper-run.bat
+logs` shows why.
 
 ### Editing config.toml on Windows
 

@@ -182,3 +182,35 @@ class TestItStaysOnThisMachine(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheWaitIsExplained(DashboardTestCase):
+    """"Waiting for its first bar" is the commonest thing a new user sees.
+
+    On its own it says nothing about whether that is normal. It usually is: the shipped
+    configs use hourly bars, so an empty dashboard for the best part of an hour is
+    expected rather than broken, and the interval is what distinguishes the two.
+    """
+
+    def waiting(self, interval):
+        s = dashboard.Session(
+            name="buy_and_hold", state_file=self.tmp / "none.json",
+            trades_file=self.tmp / "none.csv", starting_cash=1000.0, currency="£",
+            symbol="BTC_USD", interval=interval,
+        )
+        return dashboard.snapshot([s])["sessions"][0]
+
+    def test_it_reports_how_long_a_bar_takes(self):
+        self.assertEqual(self.waiting("1h")["wait_minutes"], 60)
+        self.assertEqual(self.waiting("1m")["wait_minutes"], 1)
+        self.assertEqual(self.waiting("15m")["wait_minutes"], 15)
+
+    def test_an_unknown_interval_gives_no_number_rather_than_a_wrong_one(self):
+        self.assertIsNone(self.waiting("3s")["wait_minutes"])
+
+    def test_the_symbol_and_interval_survive_having_no_state(self):
+        """A session with nothing on disk still has to be able to describe itself."""
+        s = self.waiting("1h")
+        self.assertTrue(s["waiting"])
+        self.assertEqual(s["symbol"], "BTC_USD")
+        self.assertEqual(s["interval"], "1h")

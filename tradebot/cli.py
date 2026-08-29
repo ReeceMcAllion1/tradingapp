@@ -772,6 +772,8 @@ def cmd_dashboard(args) -> int:
             trades_file=Path(cfg.live.trades_file),
             starting_cash=cfg.account.starting_cash,
             currency=cfg.account.symbol,
+            symbol=cfg.market.symbol,
+            interval=cfg.market.interval,
         ))
 
     try:

@@ -42,6 +42,20 @@ class Session:
     trades_file: Path
     starting_cash: float
     currency: str
+    symbol: str = ""
+    interval: str = ""
+
+
+#: Roughly how long one bar takes, for explaining a wait. Unknown intervals return None
+#: rather than a guess - a wrong number here would be worse than no number.
+_INTERVAL_MINUTES = {
+    "1m": 1, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "12h": 720, "1D": 1440, "7D": 10080,
+}
+
+
+def _interval_minutes(interval: str) -> int | None:
+    return _INTERVAL_MINUTES.get(interval)
 
 
 def _read_json(path: Path) -> dict:
@@ -70,9 +84,15 @@ def snapshot(sessions: list[Session]) -> dict:
     for session in sessions:
         state = _read_json(session.state_file)
         if not state:
+            # A session that has not written state yet is the commonest thing to see on
+            # a first run, and "waiting" on its own tells you nothing about whether that
+            # is normal. The interval does: on hourly bars nothing appears for up to an
+            # hour, which is alarming only if you do not know it.
             out.append({"name": session.name, "waiting": True,
                         "currency": session.currency,
-                        "starting_cash": session.starting_cash})
+                        "starting_cash": session.starting_cash,
+                        "symbol": session.symbol, "interval": session.interval,
+                        "wait_minutes": _interval_minutes(session.interval)})
             continue
 
         engine = state.get("engine", {})
@@ -223,9 +243,24 @@ const sign = n => (n > 0 ? "+" : "") + fmt(n);
 
 function sessionCard(s) {
   if (s.waiting) {
-    return `<div class="card"><div class="head"><span class="title">${s.name}</span>
-      <span class="sub">waiting for its first bar</span></div>
-      <div class="empty">No state file yet. It writes one after the first completed bar.</div></div>`;
+    const iv = s.interval ? `${s.interval} bars` : "its configured interval";
+    const wait = s.wait_minutes
+      ? (s.wait_minutes >= 60
+          ? `up to ${s.wait_minutes / 60} hour${s.wait_minutes > 60 ? "s" : ""}`
+          : `up to ${s.wait_minutes} minute${s.wait_minutes > 1 ? "s" : ""}`)
+      : null;
+    return `<div class="card"><div class="head">
+      <span class="title">${s.name}</span>
+      <span class="sub">${s.symbol || ""} ${iv} &middot; no bar closed yet</span></div>
+      <div class="empty">
+        Nothing is wrong yet. A session writes its first update when its first bar
+        <em>closes</em>${wait ? `, so on ${iv} that is <strong>${wait}</strong> after starting` : ""}.
+        ${s.wait_minutes && s.wait_minutes >= 60
+          ? `<br><br>Want to see it working sooner? Set <code>interval = "1m"</code> in the config
+             and restart &mdash; it trades the same way, just faster.` : ""}
+        <br><br>If it is still empty well past that, the session is not running:
+        check <code>state/${s.name}_session.log</code>.
+      </div></div>`;
   }
   const pnl = s.equity - s.starting_cash;
   const pct = s.starting_cash ? (s.equity / s.starting_cash - 1) * 100 : 0;
