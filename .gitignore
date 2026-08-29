@@ -23,3 +23,6 @@ venv/
 .env
 *.key
 *.secret
+
+# Guard against two mutation sweeps editing source at once
+.mutation-sweep.lock/
