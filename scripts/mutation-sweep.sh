@@ -291,6 +291,16 @@ mutate tradebot/dashboard.py \
     'an unmarked position is valued at nothing'
 
 echo
+echo "  Cross-platform"
+mutate tradebot/config.py \
+    'if suspects:' 'if False:' \
+    'a Windows path in a config gets only "Invalid hex value"'
+mutate tradebot/cli.py \
+    'matches = sorted(glob(pattern))' \
+    'matches = []' \
+    'globs are no longer expanded for shells that do not'
+
+echo
 echo "  Preflight"
 mutate tradebot/preflight.py \
     'if rows and net <= 0:' 'if False:' \

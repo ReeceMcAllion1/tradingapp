@@ -109,6 +109,42 @@ def _subset(cls, data: dict, section: str) -> dict:
     return {k: v for k, v in data.items() if k in known}
 
 
+def _explain_toml_error(path: Path, exc: Exception) -> str:
+    """Turn a TOML parser complaint into something a person can act on.
+
+    One case is worth catching by hand, because the error it produces is actively
+    misleading. A Windows path pasted into a double-quoted TOML value -
+    ``state_file = "C:\\Users\\me\\bot\\state.json"`` - is not a path as far as TOML
+    is concerned: the backslash starts an escape sequence, ``\\U`` begins a Unicode
+    escape, and the parser reports "Invalid hex value" at a column the reader has no
+    reason to connect to their own file path. Nobody guesses that from the message.
+
+    Forward slashes work perfectly well on Windows, so that is the fix offered first.
+    """
+    message = f"{path} is not valid TOML: {exc}"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return message
+
+    suspects = [
+        line.strip() for line in text.splitlines()
+        if '"' in line and "\\" in line and "\\\\" not in line
+    ]
+    if suspects:
+        message += (
+            "\n\n  This looks like a Windows path in a quoted value. A backslash starts"
+            "\n  an escape sequence in TOML, so a path is read as one and rejected."
+            f"\n  The line responsible is probably:\n    {suspects[0]}"
+            "\n\n  Use forward slashes, which work fine on Windows:"
+            '\n    state_file = "C:/Users/you/bot/state.json"'
+            "\n  or double every backslash, or use single quotes, which take the text"
+            "\n  literally:"
+            "\n    state_file = 'C:\\Users\\you\\bot\\state.json'"
+        )
+    return message
+
+
 def load(path: str | Path | None = None) -> Config:
     """Load config from TOML, falling back to defaults when the file is absent."""
     target = Path(path) if path else DEFAULT_PATH
@@ -119,8 +155,11 @@ def load(path: str | Path | None = None) -> Config:
         _align_lot_size(config, {})
         return config
 
-    with target.open("rb") as handle:
-        raw = tomllib.load(handle)
+    try:
+        with target.open("rb") as handle:
+            raw = tomllib.load(handle)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(_explain_toml_error(target, exc)) from exc
 
     strategy_raw = dict(raw.get("strategy", {}))
     strategy_params = dict(strategy_raw.pop("params", {}))

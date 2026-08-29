@@ -24,6 +24,18 @@ def paper_csv(path, rows):
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def toml_path(path) -> str:
+    """A filesystem path as a TOML value, safe on every platform.
+
+    A Windows path written straight into a double-quoted TOML string is not a path to
+    the parser: the backslash starts an escape, ``\\U`` in ``C:\\Users`` begins a Unicode
+    escape, and it fails with "Invalid hex value" pointing at a column that means
+    nothing to the reader. This suite wrote paths that way and passed on Linux for
+    exactly that reason - the bug only exists where the separator is a backslash.
+    """
+    return '"' + str(path).replace("\\", "\\\\") + '"'
+
+
 class TestPreflight(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -214,8 +226,9 @@ class TestStatusReading(unittest.TestCase):
 
         cfg_path = self.tmp / "c.toml"
         cfg_path.write_text(
-            f'[live]\nstate_file = "{self.config.live.state_file}"\n'
-            f'trades_file = "{self.config.live.trades_file}"\n',
+            "[live]\n"
+            f"state_file = {toml_path(self.config.live.state_file)}\n"
+            f"trades_file = {toml_path(self.config.live.trades_file)}\n",
             encoding="utf-8",
         )
         args = argparse.Namespace(config=str(cfg_path), recent=recent)

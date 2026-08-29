@@ -302,3 +302,70 @@ class TestPathsExpandWithoutAShell(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("no config matched", message)
         self.assertIn("project folder", message)
+
+
+class TestWindowsPathsInConfig(unittest.TestCase):
+    """A Windows path in a quoted TOML value, and the error it used to produce.
+
+    `state_file = "C:\\Users\\me\\bot\\state.json"` is not a path as far as TOML is
+    concerned. The backslash starts an escape sequence, `\\U` in `\\Users` begins a
+    Unicode escape, and the parser rejects the file with "Invalid hex value" at a column
+    the reader has no reason to connect to their own file path. Nobody guesses that from
+    the message, and this suite could not have caught it either - the bug only exists
+    where the path separator is a backslash, so it passed on Linux for years.
+    """
+
+    def write(self, body):
+        path = Path(tempfile.mkdtemp()) / "c.toml"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_a_raw_windows_path_is_explained_not_just_rejected(self):
+        path = self.write('[live]\nstate_file = "C:\\Users\\Reece\\bot\\state.json"\n')
+        with self.assertRaises(ValueError) as caught:
+            config_mod.load(str(path))
+        message = str(caught.exception)
+        self.assertIn("Windows path", message)
+        self.assertIn("forward slashes", message)
+        self.assertIn("C:/Users", message, "the message must show the working form")
+
+    def test_the_offending_line_is_quoted_back(self):
+        path = self.write('[live]\nstate_file = "C:\\Users\\Reece\\bot\\state.json"\n')
+        with self.assertRaises(ValueError) as caught:
+            config_mod.load(str(path))
+        self.assertIn("state_file", str(caught.exception))
+
+    def test_forward_slashes_work_on_any_platform(self):
+        path = self.write('[live]\nstate_file = "C:/Users/Reece/bot/state.json"\n')
+        self.assertEqual(config_mod.load(str(path)).live.state_file,
+                         "C:/Users/Reece/bot/state.json")
+
+    def test_doubled_backslashes_work(self):
+        path = self.write('[live]\nstate_file = "C:\\\\Users\\\\Reece\\\\state.json"\n')
+        self.assertEqual(config_mod.load(str(path)).live.state_file,
+                         "C:\\Users\\Reece\\state.json")
+
+    def test_a_single_quoted_literal_works(self):
+        path = self.write("[live]\nstate_file = 'C:\\Users\\Reece\\state.json'\n")
+        self.assertEqual(config_mod.load(str(path)).live.state_file,
+                         "C:\\Users\\Reece\\state.json")
+
+    def test_an_ordinary_toml_error_is_still_reported_plainly(self):
+        """The Windows hint must not be bolted onto every unrelated syntax error."""
+        path = self.write("[live\nenabled = true\n")
+        with self.assertRaises(ValueError) as caught:
+            config_mod.load(str(path))
+        self.assertNotIn("Windows path", str(caught.exception))
+
+    def test_the_test_suites_own_helper_survives_a_windows_path(self):
+        """The suite wrote paths straight into TOML, which is why it failed on Windows."""
+        import sys
+        sys.path.insert(0, "tests")
+        try:
+            from test_preflight import toml_path
+        finally:
+            sys.path.pop(0)
+
+        windows = "C:\\Users\\Reece\\AppData\\Local\\Temp\\tmp1\\state.json"
+        path = self.write(f"[live]\nstate_file = {toml_path(windows)}\n")
+        self.assertEqual(config_mod.load(str(path)).live.state_file, windows)

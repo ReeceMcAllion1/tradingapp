@@ -25,6 +25,18 @@ scripts\paper-run.bat watch               :: open the dashboard
 scripts\paper-run.bat stop                :: stop everything
 ```
 
+### Editing config.toml on Windows
+
+If you put a Windows path in, use forward slashes:
+
+```toml
+state_file = "C:/Users/you/tradingapp/state/live_state.json"
+```
+
+They work fine on Windows. A raw `C:\Users\...` is not valid TOML — the backslash
+starts an escape sequence — and the parser's own complaint ("Invalid hex value") gives
+no hint of that, so the loader now explains it instead.
+
 No git? Download the branch as a ZIP from GitHub — the green **Code** button, then
 **Download ZIP** — unzip it, and `cd` into the unzipped folder before running anything.
 `No module named tradebot` always means you are in the wrong folder.
