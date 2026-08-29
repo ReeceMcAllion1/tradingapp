@@ -287,6 +287,51 @@ class TestTradeLog(unittest.TestCase):
             rows = list(csvmod.DictReader(handle))
         self.assertEqual([r["n"] for r in rows], ["1", "2", "3", "4"])
 
+    def test_the_net_column_is_net_and_the_cost_column_is_real(self):
+        """This table is the answer to "can I see the trades?" - it must not flatter.
+
+        Both survived a mutation sweep: the net column could show gross P&L and the
+        cost column could be hard-wired to zero, with every other test still passing.
+        Either one makes every trade look better than it was, which is the one thing a
+        trade log must never do.
+        """
+        from tradebot import tradelog
+
+        winner, loser = self._trades()
+        rows = tradelog.rows([winner, loser], starting_cash=1000.0)
+
+        # The winner: 10 units from 100 to 110 is 100 gross, less 2.00 of fees.
+        self.assertAlmostEqual(rows[0]["gross"], 100.0)
+        self.assertAlmostEqual(rows[0]["costs"], 2.0)
+        self.assertAlmostEqual(rows[0]["net"], 98.0)
+        self.assertLess(rows[0]["net"], rows[0]["gross"], "costs must reduce the result")
+
+        # The loser: 5 units from 110 to 105 is -25 gross, and the fee makes it worse.
+        self.assertAlmostEqual(rows[1]["gross"], -25.0)
+        self.assertAlmostEqual(rows[1]["costs"], 1.0)
+        self.assertAlmostEqual(rows[1]["net"], -26.0)
+        self.assertLess(rows[1]["net"], rows[1]["gross"])
+
+    def test_every_row_reconciles_gross_minus_costs_to_net(self):
+        from tradebot import tradelog
+
+        for row in tradelog.rows(self._trades(), starting_cash=1000.0):
+            self.assertAlmostEqual(row["net"], row["gross"] - row["costs"], places=2,
+                                   msg=f"row {row['n']} does not add up")
+
+    def test_a_trade_whose_costs_exceed_its_gain_is_shown_as_a_loss(self):
+        """The project's central lesson, and the log has to be able to express it."""
+        from tradebot import tradelog
+        from tradebot.types import Side, Trade
+
+        barely = Trade(entry_ts=0, exit_ts=DAY_MS, side=Side.BUY, qty=1.0,
+                       entry_price=100.0, exit_price=100.5, fees=2.0,
+                       entry_reference=100.0, exit_reference=100.5, reason="take profit")
+        row = tradelog.rows([barely])[0]
+        self.assertGreater(row["gross"], 0.0, "the price did move in our favour")
+        self.assertLess(row["net"], 0.0, "and it was still a loss after costs")
+        self.assertIn("1 winners, 1 losers", tradelog.render(self._trades(), colour=False))
+
     def test_the_limit_note_reports_how_many_were_hidden(self):
         from tradebot import tradelog
         text = tradelog.render(self._trades(), limit=1, colour=False)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from tradebot import sweep as sweep_mod
 from tradebot.costs import CostModel
@@ -37,6 +38,69 @@ class TestSweep(unittest.TestCase):
         for cell in result.cells:
             expected = cell.metrics.total_return_pct - cell.benchmark.total_return_pct
             self.assertAlmostEqual(cell.gap, expected)
+
+    def test_the_mean_is_a_mean_and_not_the_best_cell(self):
+        """The failure that would defeat the module's entire purpose.
+
+        This tool exists to stop a single lucky parameter cell being presented as the
+        result. If its "mean" quietly reported the maximum instead, the sweep would
+        cherry-pick automatically while looking like the thing that prevents it - and
+        it survived a mutation sweep, so nothing was checking.
+        """
+        from tradebot.metrics import Metrics
+        from tradebot.sweep import Cell, Sweep
+
+        def cell(params, ret, bench=0.0, dd=10.0, bench_dd=10.0):
+            def metrics(total, drawdown):
+                return Metrics(
+                    starting_equity=1000.0, ending_equity=1000.0, total_return_pct=total,
+                    cagr_pct=0.0, years=1.0, gross_pnl=0.0, net_pnl=0.0, fees_paid=0.0,
+                    slippage_paid=0.0, max_drawdown_pct=drawdown, sharpe=0.0, trades=0,
+                    win_rate=0.0, gross_win_rate=0.0, profit_factor=0.0, avg_trade=0.0,
+                    best_trade=0.0, worst_trade=0.0, bars=1000,
+                )
+            return Cell(symbol="A", params=params, metrics=metrics(ret, dd),
+                        benchmark=metrics(bench, bench_dd))
+
+        params = {"period": 100}
+        # One brilliant cell and three poor ones: mean -5, max +30.
+        sweep = Sweep(strategy="x", cells=[
+            cell(params, 30.0), cell(params, -10.0), cell(params, -20.0), cell(params, -20.0),
+        ])
+        self.assertAlmostEqual(sweep.mean_gap(params), -5.0)
+        self.assertNotAlmostEqual(sweep.mean_gap(params), 30.0)
+
+    def test_the_mean_only_averages_cells_with_those_settings(self):
+        from tradebot.metrics import Metrics
+        from tradebot.sweep import Cell, Sweep
+
+        def cell(params, ret):
+            m = Metrics(
+                starting_equity=1000.0, ending_equity=1000.0, total_return_pct=ret,
+                cagr_pct=0.0, years=1.0, gross_pnl=0.0, net_pnl=0.0, fees_paid=0.0,
+                slippage_paid=0.0, max_drawdown_pct=0.0, sharpe=0.0, trades=0,
+                win_rate=0.0, gross_win_rate=0.0, profit_factor=0.0, avg_trade=0.0,
+                best_trade=0.0, worst_trade=0.0, bars=1000,
+            )
+            zero = replace(m, total_return_pct=0.0)
+            return Cell(symbol="A", params=params, metrics=m, benchmark=zero)
+
+        a, b = {"period": 50}, {"period": 200}
+        sweep = Sweep(strategy="x", cells=[cell(a, 10.0), cell(a, 20.0), cell(b, -100.0)])
+        self.assertAlmostEqual(sweep.mean_gap(a), 15.0)
+        self.assertAlmostEqual(sweep.mean_gap(b), -100.0)
+
+    def test_the_drawdown_cut_is_really_measured(self):
+        result = sweep_mod.run(self.series, "slow_trend", {"period": [50, 200]}, **self.kwargs)
+        cuts = [c.drawdown_cut for c in result.cells]
+        self.assertTrue(cuts)
+        self.assertTrue(any(abs(c) > 1e-9 for c in cuts),
+                        "every cell reported an identical zero drawdown change")
+        for c in result.cells:
+            self.assertAlmostEqual(
+                c.drawdown_cut,
+                c.benchmark.max_drawdown_pct - c.metrics.max_drawdown_pct, places=9,
+            )
 
     def test_the_report_states_how_many_settings_beat_the_benchmark(self):
         result = sweep_mod.run(self.series, "slow_trend",
