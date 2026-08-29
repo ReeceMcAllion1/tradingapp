@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from . import backtest as backtest_mod
+from . import opportunity as opportunity_mod
 from . import basket as basket_mod
 from . import config as config_mod
 from . import preflight as preflight_mod
@@ -260,6 +261,24 @@ def cmd_study(args) -> int:
 
     print(study_mod.render(result, currency="$"))
 
+    # The study already compares each strategy to holding its own symbol. This asks the
+    # other question - what the money would have done in an index fund instead - which
+    # is the comparison a person actually faces when deciding whether to run any of it.
+    if not args.no_index:
+        active = [r for r in result.rows if not r.is_benchmark]
+        best = max(active, key=lambda r: r.metrics.ending_equity, default=None)
+        if best is not None:
+            try:
+                index = study_mod.load_symbol(opportunity_mod.DEFAULT_INDEX, years=args.years)
+            except Exception as exc:  # noqa: BLE001 - a comparison must not lose the study
+                print(f"  (no index comparison: {exc})", file=sys.stderr)
+            else:
+                print(opportunity_mod.render(
+                    opportunity_mod.measure(index, args.cash),
+                    best.metrics.ending_equity,
+                    f"best strategy run ({best.strategy} on {best.symbol})", "$",
+                ))
+
     if result.failures:
         print("  Symbols that failed to load:")
         for symbol, reason in result.failures.items():
@@ -318,6 +337,25 @@ def cmd_trades(args) -> int:
         path = tradelog.write_csv(args.csv_out, result.trades, starting_cash=args.cash)
         print(f"  wrote {len(result.trades):,} trades to {path}\n")
     return 0
+
+
+def _print_opportunity(candles, ending_equity, starting_cash, label, currency="£"):
+    """Price the do-nothing alternative over the same window, and say what it cost.
+
+    Loaded lazily and failing quietly: this is a comparison, not the result, and a
+    missing index file or a dead network must never take down someone's backtest.
+    """
+    try:
+        index = study_mod.load_symbol(opportunity_mod.DEFAULT_INDEX, years=20)
+    except Exception:
+        return
+    lo, hi = candles[0].ts, candles[-1].ts
+    window = [c for c in index if lo <= c.ts <= hi]
+    text = opportunity_mod.render(
+        opportunity_mod.measure(window, starting_cash), ending_equity, label, currency
+    )
+    if text:
+        print(text)
 
 
 def cmd_sweep(args) -> int:
@@ -444,6 +482,10 @@ def cmd_backtest(args) -> int:
 
     result = backtest_mod.run_from_config(candles, strategy, config)
     print(result.metrics.render(f"Backtest: {strategy.name}"))
+    if not args.no_index:
+        _print_opportunity(candles, result.metrics.ending_equity,
+                           config.account.starting_cash, strategy.name,
+                           config.account.symbol)
 
     if result.risk_events:
         print("  Risk events")
@@ -649,7 +691,30 @@ def cmd_report(args) -> int:
             except Exception as exc:  # noqa: BLE001 - a missing benchmark must not lose the report
                 print(f"  (no benchmark for {r.name}: {exc})", file=sys.stderr)
 
-    print(report_mod.render(reports, currency=config_mod.load(configs[0]).account.symbol))
+    currency = config_mod.load(configs[0]).account.symbol
+    print(report_mod.render(reports, currency=currency))
+
+    # And what the same money would have done doing nothing at all. Sessions are
+    # separate sleeves of one pot, so they are priced together - the question is what
+    # the whole allocation was worth, not each piece of it.
+    if not args.offline and not args.no_index:
+        combined = sum(r.equity for r in reports)
+        staked = sum(r.starting_cash for r in reports)
+        span = max((r for r in reports), key=lambda r: r.days, default=None)
+        if span is not None and span.started is not None:
+            try:
+                index = study_mod.load_symbol(opportunity_mod.DEFAULT_INDEX, years=20)
+                lo = span.started.timestamp() * 1000
+                hi = span.updated.timestamp() * 1000 if span.updated else index[-1].ts
+                window = [c for c in index if lo <= c.ts <= hi]
+                label = "these sessions" if len(reports) > 1 else reports[0].name
+                text = opportunity_mod.render(
+                    opportunity_mod.measure(window, staked), combined, label, currency
+                )
+                if text:
+                    print(text)
+            except Exception as exc:  # noqa: BLE001 - a comparison must not lose the report
+                print(f"  (no index comparison: {exc})", file=sys.stderr)
     return 0
 
 
@@ -778,6 +843,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--slippage-bps", type=float, default=2.0)
     p.add_argument("--flat-fee", type=float, default=0.0, help="flat commission per trade")
     p.add_argument("--refresh", action="store_true", help="re-download instead of using the cache")
+    p.add_argument("--no-index", action="store_true",
+                   help="skip the comparison against holding an index fund")
     p.set_defaults(func=cmd_study)
 
     p = sub.add_parser("trades", help="show every trade a strategy made")
@@ -851,6 +918,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--trades", type=int, default=0, metavar="N", help="print the first N trades")
     p.add_argument("--save-trades", metavar="PATH", help="export the full trade log to this CSV")
+    p.add_argument("--no-index", action="store_true",
+                   help="skip the comparison against holding an index fund")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("paper", help="run automated on live data with simulated money")
@@ -868,6 +937,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("report", help="end-of-run verdict for one or more sessions")
     p.add_argument("configs", nargs="*", metavar="CONFIG", help="session config files")
     p.add_argument("--offline", action="store_true", help="skip the buy-and-hold benchmark")
+    p.add_argument("--no-index", action="store_true",
+                   help="skip the comparison against holding an index fund")
     p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("status", help="check on a running session without stopping it")

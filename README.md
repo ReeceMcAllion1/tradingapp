@@ -523,6 +523,41 @@ So the standing conclusion holds, with one amendment: **diversify first, then si
 risk.** Together they produce the best risk-adjusted portfolio here by a clear margin.
 Neither produces more money than holding the index, and nothing in this repository does.
 
+---
+
+## The do-nothing alternative, printed next to everything
+
+Every comparison above asks whether a strategy beat holding *the same asset*. That is
+the right test of the rules and it is not the decision anyone faces. The real question
+is what else the money could have been doing, and for most people the honest answer is a
+cheap index fund bought once and left alone.
+
+So that number now prints under a backtest, under a study, and under a live session
+report — in pounds, because percentages are easy to wave away and four figures are not:
+
+```
+  The do-nothing alternative (SPY, held)
+  ----------------------------------------------
+  index fund, held          £    1,448.23      44.8%
+  vol_target                £      914.40      -8.6%
+
+  Trading cost you £533.83 against buying the index and
+  leaving it alone.
+```
+
+The index is charged its own tracker fee, so the yardstick is not flattered either, and
+it is never priced over a window too short to price. When a strategy wins the block says
+so — and still points out that one window is not evidence.
+
+This is not offered as a like-for-like measure of skill: comparing a Bitcoin strategy to
+an equity index is not comparing like with like, and the same-asset benchmark is what
+judges the rules. It is the opportunity cost of the capital, which is the number that
+decides whether an activity was worth doing at all. Over the decade tested here that
+number is about **£14,000 on a £10,000 stake**, and it is the largest figure in this
+repository.
+
+Turn it off with `--no-index` if you already know.
+
 ## Seeing the trades
 
 Every number above can be checked, trade by trade:
@@ -595,6 +630,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `sweep.py` | Parameter grids, so a lucky cell cannot pass as a finding |
 | `walkforward.py` | Out-of-sample validation: the check on every other number here |
 | `basket.py` | Several markets held as one portfolio, and what actually correlates |
+| `opportunity.py` | What the same money would have made doing nothing at all |
 | `report.py` | End-of-run verdict, benchmarked against holding over the same window |
 | `preflight.py` | Readiness checks that must pass before risking real money |
 | `live.py` | The unattended runner, with state that survives restarts |
@@ -602,7 +638,7 @@ python3 -m tradebot init-config    write a starter config.toml
 | `feeds/` | Crypto.com and Yahoo data, CSV files, and a synthetic generator |
 | `strategies/` | Seven: a benchmark, two that fail instructively, and two that insure |
 
-Run the tests with `python3 -m unittest discover -s tests -t .` — there are 387, and
+Run the tests with `python3 -m unittest discover -s tests -t .` — there are 408, and
 they cover the accounting, the risk limits, and the ways backtesters usually lie.
 Two files do more than check behaviour that was designed. `tests/test_golden.py` pins
 every strategy's end-to-end result to the penny, so a change to fill pricing or bracket
@@ -618,7 +654,7 @@ venue's published algorithm; it does not prove the algorithm is current, and non
 has been checked against a funded account.
 
 `./scripts/mutation-sweep.sh` asks the harder question: would these tests fail if the
-code were wrong? It breaks the package on purpose, 46 times — a cost that stops being
+code were wrong? It breaks the package on purpose, 49 times — a cost that stops being
 charged, a limit that stops binding, a validator that stops validating — and checks the
 suite rejects each one. Every mutation is currently caught. It is worth running after
 any change to the engine, the cost model or the analysis modules, because a test that

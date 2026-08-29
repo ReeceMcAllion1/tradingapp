@@ -263,6 +263,20 @@ mutate tradebot/basket.py \
     'the daily roll-up loses the true low'
 
 echo
+echo "  The do-nothing alternative"
+mutate tradebot/opportunity.py \
+    'return (gross * (1.0 - INDEX_ANNUAL_FEE) ** max(self.years, 0.0) - 1.0) * 100.0' \
+    'return (gross - 1.0) * 100.0' \
+    'the index fund is given a free ride on its own fees'
+mutate tradebot/opportunity.py \
+    'return self.ending_cash - strategy_ending' \
+    'return abs(self.ending_cash - strategy_ending)' \
+    'beating the index is reported as losing to it'
+mutate tradebot/opportunity.py \
+    'if len(candles) < 2:' 'if False:' \
+    'an index is priced over a window too short to price'
+
+echo
 echo "  Preflight"
 mutate tradebot/preflight.py \
     'if rows and net <= 0:' 'if False:' \
