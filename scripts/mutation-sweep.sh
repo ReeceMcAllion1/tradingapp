@@ -277,6 +277,20 @@ mutate tradebot/opportunity.py \
     'an index is priced over a window too short to price'
 
 echo
+echo "  The dashboard"
+mutate tradebot/dashboard.py \
+    'raw_mark = float(state.get("last_price", 0.0) or 0.0)' \
+    'raw_mark = float(trades[-1]["exit"]) if trades else 0.0' \
+    'an open position is valued from a possibly-foreign trade log'
+mutate tradebot/dashboard.py \
+    'HOST = "127.0.0.1"' 'HOST = "0.0.0.0"' \
+    'the dashboard is exposed to the whole network'
+mutate tradebot/dashboard.py \
+    'mark = raw_mark if marked else avg' \
+    'mark = raw_mark if marked else 0.0' \
+    'an unmarked position is valued at nothing'
+
+echo
 echo "  Preflight"
 mutate tradebot/preflight.py \
     'if rows and net <= 0:' 'if False:' \

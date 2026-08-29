@@ -46,7 +46,26 @@ money, restarting any session that crashes. It detaches, so you can close the te
 ./scripts/paper-run.sh stop       # stop them all
 ```
 
-## Watch the trades
+## Watch it live, in a browser
+
+```bash
+python3 -m tradebot dashboard configs/*.toml
+```
+
+Opens `http://127.0.0.1:8765` and refreshes itself every five seconds: position, equity,
+fees, the live stop, and every completed round trip with the reason the strategy gave.
+Leave the tab open. Closing it does not stop the bot; stopping the dashboard does not
+either — it only ever reads.
+
+It listens on localhost only, on purpose: the page shows your positions and balances,
+and that should not be readable by the rest of your network. To watch from another
+machine, tunnel it rather than exposing it:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 you@your-box
+```
+
+Or, if you prefer the terminal:
 
 ```bash
 tail -f state/*_trades.csv        # every closed round trip as it happens

@@ -71,6 +71,7 @@ class LiveRunner:
         self._logged_trades = 0
         self._started_at = int(time.time() * 1000)
         self._last_bar_ts = 0
+        self._last_price = 0.0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -165,6 +166,7 @@ class LiveRunner:
             log.debug("ignoring bar %s: not newer than %s", candle.ts, self._last_bar_ts)
             return False
         self._last_bar_ts = candle.ts
+        self._last_price = candle.close
 
         fills = self.engine.process(candle)
         equity = self.portfolio.equity(candle.close)
@@ -284,6 +286,14 @@ class LiveRunner:
             # engine's number as session activity credits a fresh run with a hundred
             # bars of work it did not do.
             "live_bars": self._bars,
+            # The last price this session actually saw. Without it a reader has no
+            # honest way to value an open position: the alternatives are the average
+            # entry price, which reports every open trade as flat, or the last closed
+            # trade's exit, which can be hours stale or from an entirely different run.
+            # Both invent a number. This one is a real observed price with a timestamp
+            # beside it, so a stale mark can at least be recognised as stale.
+            "last_price": self._last_price,
+            "last_price_ts": self._last_bar_ts,
             "engine": self.engine.state(),
         }
         path = self.state_path
@@ -317,6 +327,7 @@ class LiveRunner:
         # Resuming into the bar the previous process already handled would repeat it.
         self._last_bar_ts = max(self._last_bar_ts, int(payload.get("last_bar_ts") or 0))
         self._bars = int(payload.get("live_bars", 0))
+        self._last_price = float(payload.get("last_price", 0.0) or 0.0)
         self.engine.restore(payload["engine"])
         log.info(
             "resumed from %s: position %.8f, cash %.2f%s",

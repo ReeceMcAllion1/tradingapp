@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from . import backtest as backtest_mod
+from . import dashboard as dashboard_mod
 from . import opportunity as opportunity_mod
 from . import basket as basket_mod
 from . import config as config_mod
@@ -722,6 +723,51 @@ def _position_of(report) -> float:
     return getattr(report, "_qty", 0.0)
 
 
+def cmd_dashboard(args) -> int:
+    """Serve a local page showing what every session is doing, refreshing itself."""
+    import webbrowser
+
+    configs = args.configs or ([args.config] if args.config else [])
+    if not configs:
+        raise SystemExit("give one or more config files, e.g. dashboard configs/*.toml")
+
+    sessions = []
+    for path in configs:
+        cfg = config_mod.load(path)
+        sessions.append(dashboard_mod.Session(
+            name=Path(path).stem,
+            state_file=Path(cfg.live.state_file),
+            trades_file=Path(cfg.live.trades_file),
+            starting_cash=cfg.account.starting_cash,
+            currency=cfg.account.symbol,
+        ))
+
+    try:
+        server = dashboard_mod.serve(sessions, port=args.port)
+    except OSError as exc:
+        raise SystemExit(
+            f"could not listen on {dashboard_mod.HOST}:{args.port} ({exc}). "
+            "Something else is probably using that port - try --port 8766."
+        ) from exc
+
+    url = f"http://{dashboard_mod.HOST}:{args.port}"
+    print(f"\n  Watching {len(sessions)} session(s). Open {url}")
+    print("  Bound to localhost only - nothing outside this machine can reach it.")
+    print("  Ctrl-C to stop. The bot keeps running either way.\n")
+    if not args.no_open:
+        try:
+            webbrowser.open(url)
+        except Exception:  # noqa: BLE001 - a headless box has no browser, and that is fine
+            pass
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("  dashboard stopped\n")
+    finally:
+        server.server_close()
+    return 0
+
+
 def cmd_verify_keys(args) -> int:
     config = config_mod.load(args.config)
     broker = CryptoComBroker(symbol=config.market.symbol, costs=config.costs)
@@ -940,6 +986,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-index", action="store_true",
                    help="skip the comparison against holding an index fund")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("dashboard", help="watch live sessions in a browser page that refreshes itself")
+    p.add_argument("configs", nargs="*", help="config files to watch (globs allowed)")
+    p.add_argument("--port", type=int, default=dashboard_mod.DEFAULT_PORT)
+    p.add_argument("--no-open", action="store_true", help="do not open a browser window")
+    p.set_defaults(func=cmd_dashboard)
 
     p = sub.add_parser("status", help="check on a running session without stopping it")
     p.add_argument("--recent", type=int, default=5, metavar="N", help="show the last N trades")
