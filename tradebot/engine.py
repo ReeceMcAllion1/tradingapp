@@ -309,6 +309,13 @@ class Engine:
         Not filling is the cost. Price ran away, the position was never taken, and
         whatever that move was worth is gone. The counters make that visible rather
         than letting a good fill rate be assumed.
+
+        Brackets are (re)applied here, on the fill, not when the order was placed. A
+        maker entry has no position to protect until it fills - and the ``_refresh_brackets``
+        call in ``_execute`` runs while the account is still flat, so it clears the stop
+        and returns. Without re-applying it here, a stop named on the entry decision was
+        silently dropped and the position rode the next crash uncapped, exactly the bug
+        ``_refresh_brackets`` was written to prevent on the taker path.
         """
         order = self.resting
         if order is None:
@@ -329,6 +336,7 @@ class Engine:
                                 order.decision.reason, Liquidity.MAKER)
             if fill is None:
                 return []
+            self._refresh_brackets(order.decision)
             self._record(candle.ts,
                          f"maker {fill.side.value} {fill.qty:.8f} @ {fill.price:.2f} "
                          f"- {order.decision.reason}")
@@ -349,6 +357,7 @@ class Engine:
                             f"{order.decision.reason} (crossed after {order.bars_waited} bars)")
         if fill is None:
             return []
+        self._refresh_brackets(order.decision)
         self._record(candle.ts,
                      f"crossed {fill.side.value} {fill.qty:.8f} @ {fill.price:.2f} "
                      f"- limit missed, paid taker")

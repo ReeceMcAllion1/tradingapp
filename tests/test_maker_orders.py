@@ -220,6 +220,52 @@ class TestGettingOutIsNeverPassive(unittest.TestCase):
         self.assertEqual(pf.fills[-1].liquidity, Liquidity.TAKER)
 
 
+class TestAMakerEntryKeepsItsStop(unittest.TestCase):
+    """A stop named on the entry decision must survive the maker fill.
+
+    This was a bug. The taker path submits the fill and *then* refreshes brackets, so
+    the position exists when the stop is applied. The maker path refreshed brackets
+    before resting the order - while the account was still flat - so the is_flat guard
+    in _refresh_brackets cleared the stop and returned. The order then filled with no
+    stop attached, and the position rode the next move uncapped. See
+    tests/test_engine.py::TestHoldingKeepsItsProtection for the taker-path original.
+    """
+
+    def test_a_stop_survives_a_same_bar_maker_fill(self):
+        eng, pf = engine(Scripted([Decision(1.0, stop_loss=95.0, reason="enter")]),
+                         maker_offset_bps=50)
+        eng.process(candle(1, 100, 100, 100, 100))
+        eng.process(candle(2, 100, 101, 99, 100))        # limit at 99.50, fills this bar
+        self.assertTrue(pf.is_long)
+        self.assertIsNotNone(eng.active_stop, "the entry stop was dropped on the maker fill")
+        self.assertAlmostEqual(eng.active_stop, 95.0)
+
+        eng.process(candle(3, 100, 100, 80, 82))         # crash straight through the stop
+        self.assertTrue(pf.is_flat, "the stop did not fire")
+
+    def test_a_stop_survives_a_fill_that_lands_bars_later(self):
+        eng, pf = engine(Scripted([Decision(1.0, stop_loss=95.0, reason="enter")]),
+                         maker_offset_bps=50, maker_max_wait_bars=5)
+        eng.process(candle(1, 100, 100, 100, 100))
+        eng.process(candle(2, 100, 101, 99.6, 100))      # limit 99.50 not reached - rests
+        self.assertIsNotNone(eng.resting)
+        self.assertIsNone(eng.active_stop)
+
+        eng.process(candle(3, 100, 100, 99.0, 99.5))     # now it fills, a bar later
+        self.assertTrue(pf.is_long)
+        self.assertIsNotNone(eng.active_stop, "the entry stop never attached to the delayed fill")
+        self.assertAlmostEqual(eng.active_stop, 95.0)
+
+    def test_a_stop_survives_a_crossed_fill(self):
+        eng, pf = engine(Scripted([Decision(1.0, stop_loss=95.0, reason="enter")]),
+                         maker_offset_bps=50, maker_max_wait_bars=1, maker_then_take=True)
+        eng.process(candle(1, 100, 100, 100, 100))
+        eng.process(candle(2, 101, 102, 100.5, 101))     # limit never touched, crosses to taker
+        self.assertTrue(pf.is_long)
+        self.assertIsNotNone(eng.active_stop, "the entry stop was lost when the order crossed")
+        self.assertAlmostEqual(eng.active_stop, 95.0)
+
+
 class TestOffByDefault(unittest.TestCase):
     def test_the_default_is_market_orders(self):
         self.assertEqual(ExecutionSettings().maker_offset_bps, 0.0)
