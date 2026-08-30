@@ -33,6 +33,7 @@ from . import report as report_mod
 from . import study as study_mod
 from . import sweep as sweep_mod
 from . import walkforward as walkforward_mod
+from . import webapp as webapp_mod
 from . import tradelog
 from .brokers import AlpacaBroker, CryptoComBroker, PaperBroker
 from .costs import CostModel
@@ -861,6 +862,39 @@ def cmd_dashboard(args) -> int:
     return 0
 
 
+def cmd_web(args) -> int:
+    """Serve a local page that can start and stop paper sessions."""
+    import webbrowser
+
+    try:
+        server = webapp_mod.serve(port=args.port)
+    except OSError as exc:
+        raise SystemExit(
+            f"could not listen on {webapp_mod.HOST}:{args.port} ({exc}). "
+            "Something else is probably using that port - try --port 8771."
+        ) from exc
+
+    tier = server.RequestHandlerClass.manager.tier
+    url = f"http://{webapp_mod.HOST}:{args.port}"
+    print(f"\n  tradebot panel ({tier.name} tier) - {url}")
+    print("  Bound to localhost only. It starts real OS processes, so do not expose it.")
+    if tier.name == "free":
+        print("  Set TRADEBOT_LICENSE to a Pro key to lift the free-tier limits.")
+    print("  Ctrl-C to stop the panel. Sessions it started keep running.\n")
+    if not args.no_open:
+        try:
+            webbrowser.open(url)
+        except Exception:  # noqa: BLE001 - a headless box has no browser, and that is fine
+            pass
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("  panel stopped\n")
+    finally:
+        server.server_close()
+    return 0
+
+
 def _live_broker(config):
     """The real-money broker for this config."""
     if config.alpaca.enabled:
@@ -1109,6 +1143,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="check on a running session without stopping it")
     p.add_argument("--recent", type=int, default=5, metavar="N", help="show the last N trades")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("web", help="start and stop paper sessions from a local web page")
+    p.add_argument("--port", type=int, default=webapp_mod.DEFAULT_PORT)
+    p.add_argument("--no-open", action="store_true", help="do not open a browser window")
+    p.set_defaults(func=cmd_web)
 
     p = sub.add_parser("verify-keys", help="read-only check that API credentials work")
     p.set_defaults(func=cmd_verify_keys)

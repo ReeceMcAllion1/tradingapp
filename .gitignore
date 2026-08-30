@@ -3,6 +3,8 @@ config.toml
 
 # configs/ holds committed session templates; local edits are yours
 configs/local_*.toml
+# configs the web panel writes
+configs/web_*.toml
 
 # Runtime state: positions, equity, logs
 state/
