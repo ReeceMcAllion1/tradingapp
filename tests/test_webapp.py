@@ -218,7 +218,9 @@ class TestHttpGuard(ServerFixture):
 
     def test_the_page_and_read_endpoints_serve(self):
         self.serve(webapp.FREE)
-        self.assertIn("tradebot panel", self.get("/"))
+        page = self.get("/")
+        self.assertIn('id="newForm"', page)
+        self.assertIn('id="sessions"', page)
         self.assertIn("buy_and_hold", self.get("/api/strategies"))
         self.assertEqual(json.loads(self.get("/api/overview"))["tier"]["name"], "free")
 
