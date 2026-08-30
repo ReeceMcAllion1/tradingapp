@@ -98,3 +98,24 @@ state_file = "state/live_state.json"
 log_file = "state/tradebot.log"
 trades_file = "state/trades.csv"   # every closed trade, appended as it happens
 reconcile_every_bars = 20   # re-check the real position at the exchange this often
+
+
+# Use Alpaca instead of Crypto.com for data and orders. Off by default.
+#
+# When enabled, `fetch`, `backtest`, `paper` and `live` all use Alpaca. Credentials
+# come from the environment only: APCA_API_KEY_ID and APCA_API_SECRET_KEY.
+#
+#   paper = true  -> paper-api.alpaca.markets. Real orders, real position tracking,
+#                    no real money. Not "live" for the command gates above.
+#   paper = false -> api.alpaca.markets, real money. Still obeys every [live] gate
+#                    and needs --yes-really-trade-live on the `live` command.
+#
+# asset_class picks the market:
+#   "crypto"    -> symbols like BTC/USD, trades 24/7
+#   "us_equity" -> symbols like AAPL, US market hours only; data_feed is "iex"
+#                  (free) or "sip" (paid Alpaca subscription)
+[alpaca]
+enabled = false
+asset_class = "crypto"
+paper = true
+data_feed = "iex"

@@ -34,10 +34,18 @@ from . import study as study_mod
 from . import sweep as sweep_mod
 from . import walkforward as walkforward_mod
 from . import tradelog
-from .brokers import CryptoComBroker, PaperBroker
+from .brokers import AlpacaBroker, CryptoComBroker, PaperBroker
 from .costs import CostModel
 from .engine import ExecutionSettings
-from .feeds import CryptoComFeed, CsvFeed, FeedError, SyntheticFeed, describe_span, write_csv
+from .feeds import (
+    AlpacaFeed,
+    CryptoComFeed,
+    CsvFeed,
+    FeedError,
+    SyntheticFeed,
+    describe_span,
+    write_csv,
+)
 from .live import LiveRunner, configure_logging
 from .risk import RiskLimits
 from .strategies import available, build
@@ -58,15 +66,31 @@ BANNER = """
 # ---------------------------------------------------------------------- helpers
 
 
+def _market_feed(config, poll_seconds=None):
+    """The data source this config points at: Alpaca when enabled, Crypto.com otherwise."""
+    if config.alpaca.enabled:
+        return AlpacaFeed(
+            symbol=config.market.symbol,
+            interval=config.market.interval,
+            asset_class=config.alpaca.asset_class,
+            data_feed=config.alpaca.data_feed,
+            poll_seconds=poll_seconds,
+        )
+    return CryptoComFeed(
+        symbol=config.market.symbol,
+        interval=config.market.interval,
+        poll_seconds=poll_seconds,
+    )
+
+
 def _load_candles(args, config) -> list[Candle]:
     if getattr(args, "csv", None):
         return CsvFeed(args.csv).load()
     if getattr(args, "synthetic", False):
         return SyntheticFeed(bars=args.bars, seed=args.seed).generate()
 
-    feed = CryptoComFeed(symbol=config.market.symbol, interval=config.market.interval)
     try:
-        return feed.history(args.bars)
+        return _market_feed(config).history(args.bars)
     except FeedError as exc:
         raise SystemExit(
             f"could not download market data: {exc}\n"
@@ -488,8 +512,9 @@ def cmd_walkforward(args) -> int:
 
 def cmd_fetch(args) -> int:
     config = config_mod.load(args.config)
-    feed = CryptoComFeed(symbol=config.market.symbol, interval=config.market.interval)
-    print(f"downloading {args.bars} {config.market.interval} bars of {config.market.symbol}...")
+    feed = _market_feed(config)
+    venue = "Alpaca" if config.alpaca.enabled else "Crypto.com"
+    print(f"downloading {args.bars} {config.market.interval} bars of {config.market.symbol} from {venue}...")
     try:
         candles = feed.history(args.bars)
     except FeedError as exc:
@@ -574,15 +599,24 @@ def cmd_paper(args) -> int:
 
     strategy = _build_strategy(args, config)
     _print_warnings(config, strategy)
-    feed = CryptoComFeed(
-        symbol=config.market.symbol,
-        interval=config.market.interval,
-        poll_seconds=config.live.poll_seconds,
-    )
-    broker = PaperBroker(config.costs)
+    feed = _market_feed(config, poll_seconds=config.live.poll_seconds)
+
+    if config.alpaca.enabled:
+        broker = AlpacaBroker(
+            symbol=config.market.symbol,
+            costs=config.costs,
+            asset_class=config.alpaca.asset_class,
+            paper=True,
+            max_order_notional=config.live.max_order_notional,
+            qty_decimals=config.live.qty_decimals,
+        )
+        source = f"Alpaca paper ({config.alpaca.asset_class})"
+    else:
+        broker = PaperBroker(config.costs)
+        source = "simulated fills"
 
     print(BANNER)
-    print(f"  PAPER MODE - simulated money, live {config.market.symbol} data.")
+    print(f"  PAPER MODE - {source}, live {config.market.symbol} data.")
     print(f"  Stop with Ctrl-C. State is saved to {config.live.state_file} after every bar.\n")
 
     runner = LiveRunner(config=config, strategy=strategy, feed=feed, broker=broker)
@@ -827,10 +861,39 @@ def cmd_dashboard(args) -> int:
     return 0
 
 
+def _live_broker(config):
+    """The real-money broker for this config."""
+    if config.alpaca.enabled:
+        return AlpacaBroker(
+            symbol=config.market.symbol,
+            costs=config.costs,
+            asset_class=config.alpaca.asset_class,
+            paper=config.alpaca.paper,
+            enabled=config.live.enabled,
+            dry_run=config.live.dry_run,
+            max_order_notional=config.live.max_order_notional,
+            qty_decimals=config.live.qty_decimals,
+        )
+    return CryptoComBroker(
+        symbol=config.market.symbol,
+        costs=config.costs,
+        enabled=config.live.enabled,
+        dry_run=config.live.dry_run,
+        max_order_notional=config.live.max_order_notional,
+        qty_decimals=config.live.qty_decimals,
+    )
+
+
 def cmd_verify_keys(args) -> int:
     config = config_mod.load(args.config)
-    broker = CryptoComBroker(symbol=config.market.symbol, costs=config.costs)
-    print("making one read-only balance request - no orders will be placed...")
+    if config.alpaca.enabled:
+        broker = AlpacaBroker(
+            symbol=config.market.symbol, costs=config.costs,
+            asset_class=config.alpaca.asset_class, paper=config.alpaca.paper,
+        )
+    else:
+        broker = CryptoComBroker(symbol=config.market.symbol, costs=config.costs)
+    print("making one read-only account request - no orders will be placed...")
     try:
         print(f"  {broker.verify()}")
     except Exception as exc:  # noqa: BLE001 - the message matters more than the type
@@ -854,14 +917,7 @@ def cmd_live(args) -> int:
             "This flag is required on every run, on purpose."
         )
 
-    broker = CryptoComBroker(
-        symbol=config.market.symbol,
-        costs=config.costs,
-        enabled=config.live.enabled,
-        dry_run=config.live.dry_run,
-        max_order_notional=config.live.max_order_notional,
-        qty_decimals=config.live.qty_decimals,
-    )
+    broker = _live_broker(config)
 
     print(BANNER)
     if config.live.dry_run:
@@ -882,11 +938,7 @@ def cmd_live(args) -> int:
 
     strategy = _build_strategy(args, config)
     _print_warnings(config, strategy)
-    feed = CryptoComFeed(
-        symbol=config.market.symbol,
-        interval=config.market.interval,
-        poll_seconds=config.live.poll_seconds,
-    )
+    feed = _market_feed(config, poll_seconds=config.live.poll_seconds)
     runner = LiveRunner(config=config, strategy=strategy, feed=feed, broker=broker)
     runner.run(max_bars=args.max_bars)
     return 0

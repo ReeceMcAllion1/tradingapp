@@ -65,6 +65,41 @@ class LiveConfig:
 
 
 @dataclass
+class AlpacaConfig:
+    """Route data and orders through Alpaca instead of Crypto.com.
+
+    Off by default. When ``enabled`` is true, ``fetch``, ``backtest``, ``paper`` and
+    ``live`` use Alpaca's market data and (for ``paper``/``live``) Alpaca's brokerage.
+    Credentials are read from the environment only - ``APCA_API_KEY_ID`` and
+    ``APCA_API_SECRET_KEY`` - never from this file.
+
+    ``paper = true`` points the broker at ``paper-api.alpaca.markets``: real orders,
+    real position bookkeeping, no real money. It is still not "live" for the purposes
+    of the real-money command gates. Setting ``paper = false`` is what arms real
+    trading, and it obeys the same ``[live]`` gates and ``--yes-really-trade-live``
+    flag as the Crypto.com path.
+
+    ``asset_class`` picks the market: ``"crypto"`` (symbols like ``BTC/USD``, trades
+    24/7) or ``"us_equity"`` (symbols like ``AAPL``, regular US market hours only).
+    ``data_feed`` applies to equities only: ``"iex"`` is free, ``"sip"`` needs a paid
+    Alpaca data subscription.
+    """
+
+    enabled: bool = False
+    asset_class: str = "crypto"
+    paper: bool = True
+    data_feed: str = "iex"
+
+    def __post_init__(self) -> None:
+        if self.asset_class not in ("crypto", "us_equity"):
+            raise ValueError(
+                f"alpaca.asset_class must be 'crypto' or 'us_equity', got {self.asset_class!r}"
+            )
+        if self.data_feed not in ("iex", "sip"):
+            raise ValueError(f"alpaca.data_feed must be 'iex' or 'sip', got {self.data_feed!r}")
+
+
+@dataclass
 class Config:
     market: MarketConfig = field(default_factory=MarketConfig)
     account: AccountConfig = field(default_factory=AccountConfig)
@@ -73,6 +108,7 @@ class Config:
     risk: RiskLimits = field(default_factory=RiskLimits)
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
     live: LiveConfig = field(default_factory=LiveConfig)
+    alpaca: AlpacaConfig = field(default_factory=AlpacaConfig)
 
     def validate(self) -> list[str]:
         """Return warnings worth showing the user. Errors raise instead."""
@@ -174,6 +210,7 @@ def load(path: str | Path | None = None) -> Config:
         risk=RiskLimits(**_subset(RiskLimits, raw.get("risk", {}), "risk")),
         execution=ExecutionSettings(**_subset(ExecutionSettings, raw.get("execution", {}), "execution")),
         live=LiveConfig(**_subset(LiveConfig, raw.get("live", {}), "live")),
+        alpaca=AlpacaConfig(**_subset(AlpacaConfig, raw.get("alpaca", {}), "alpaca")),
     )
     _align_lot_size(config, raw)
     return config
